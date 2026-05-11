@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+.DS_Store
+*.swp
+*.swo
+# Local dev artefacts the skill produces at runtime
+/tmp-workspace/
+*.local
