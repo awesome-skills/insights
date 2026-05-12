@@ -227,11 +227,19 @@ insights/
   reports per-message), so the `header.tokens` figure is intentionally a
   single number per report, not a leaderboard.
 - **No remote upload.** Everything stays local. The HTML loads no external
-  resources, so it's safe to email or drop into Slack.
+  resources (no CDN, no fonts, no trackers), so the file is **readable
+  offline** and survives being zipped.
 - **No background scheduling.** Run `/insights` when you want a report; it
   does nothing in the background.
 - **No cloud accounts, telemetry, or analytics.** Pure stdlib Python reading
   your own files.
+
+> ⚠️ **Self-review before sharing.** The HTML is self-contained, but that
+> doesn't mean its *contents* are safe to share. The report embeds real
+> `first_prompt` text, session summaries, file paths, and tool-output
+> fragments — these can include API keys, customer data, internal code
+> snippets, private paths. Skim it before emailing / Slacking / posting a
+> screenshot. Search-and-replace for sensitive tokens if you need to share.
 
 </details>
 

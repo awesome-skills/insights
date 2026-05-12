@@ -401,10 +401,34 @@ def _fun(report: dict) -> str:
     )
 
 
-def render(data_path: str, out_path: str, template: str | None = None) -> int:
+def _detect_lang(data: dict) -> str:
+    """Honour `header.lang` if given; otherwise sample narrative text and pick
+    `zh` when >25% of the characters are CJK, else `en`.
+
+    Default `lang="en"` hurts assistive tech and browser language detection
+    when the LLM wrote a Chinese report.
+    """
+    header = data.get("header") or {}
+    explicit = header.get("lang")
+    if explicit:
+        return str(explicit)
+    sample = " ".join([
+        str((data.get("at_a_glance") or {}).get("whats_working", "")),
+        str((data.get("interaction_style") or {}).get("narrative", "")),
+        str((data.get("friction_analysis") or {}).get("intro", "")),
+        str(header.get("title", "")),
+    ])[:2000]
+    if not sample:
+        return "en"
+    cjk = sum(1 for ch in sample if "一" <= ch <= "鿿" or "㐀" <= ch <= "䶿")
+    return "zh" if cjk / max(len(sample), 1) > 0.25 else "en"
+
+
+def render(data_path: str, out_path: str) -> int:
     data = json.loads(Path(data_path).expanduser().read_text(encoding="utf-8"))
     header = data.get("header", {})
     title = header.get("title") or f"{header.get('agent', 'Agent').replace('-', ' ').title()} Insights"
+    lang = _detect_lang(data)
     subtitle_parts = []
     if header.get("agent"):
         subtitle_parts.append(_esc(header["agent"]))
@@ -438,7 +462,7 @@ def render(data_path: str, out_path: str, template: str | None = None) -> int:
     body.append(_fun(data))
 
     html_doc = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="{_esc(lang)}">
 <head>
 <meta charset="utf-8">
 <title>{_esc(title)}</title>
@@ -465,6 +489,5 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--data", required=True)
     p.add_argument("--out", required=True)
-    p.add_argument("--template", default=None)
     a = p.parse_args()
-    raise SystemExit(render(a.data, a.out, a.template))
+    raise SystemExit(render(a.data, a.out))

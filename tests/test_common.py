@@ -133,3 +133,35 @@ class TestGitActions:
     def test_no_git_command(self):
         assert common.count_git_actions("echo nothing") == (0, 0)
         assert common.count_git_actions("") == (0, 0)
+
+
+# ------------- safe_session_id -------------
+
+class TestSafeSessionId:
+    def test_normal_id_passthrough(self):
+        assert common.safe_session_id("abc-123_xyz.456") == "abc-123_xyz.456"
+
+    def test_path_traversal_neutralized(self):
+        sid = common.safe_session_id("../../etc/passwd")
+        assert "/" not in sid
+        assert ".." not in sid
+
+    def test_absolute_path_neutralized(self):
+        sid = common.safe_session_id("/etc/passwd")
+        assert "/" not in sid
+
+    def test_pure_dots_falls_back(self):
+        assert common.safe_session_id("..") == "unknown"
+        assert common.safe_session_id(".") == "unknown"
+        assert common.safe_session_id("") == "unknown"
+        assert common.safe_session_id(None) == "unknown"
+
+    def test_excessive_length_capped(self):
+        sid = common.safe_session_id("a" * 1000)
+        assert len(sid) <= 128
+
+    def test_unicode_replaced(self):
+        # CJK characters aren't filename-safe across all platforms; replace.
+        sid = common.safe_session_id("会话/01")
+        assert "/" not in sid
+        assert sid != ""

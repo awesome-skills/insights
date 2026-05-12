@@ -122,3 +122,32 @@ def test_bar_chart_cycles_colors(write_and_render):
     # Expect at least 2 distinct colour classes in the same chart.
     classes = set(re.findall(r'bar-fill (c\d)', html))
     assert len(classes) >= 2
+
+
+def test_html_lang_chinese_detected(write_and_render):
+    data = {
+        "header": {"title": "中文报告"},
+        "at_a_glance": {"whats_working": "用户最近在搭跨 agent skill，效率不错。"},
+        "interaction_style": {"narrative": "用户驱动节奏稳健，多用 subagent 校验。", "key_pattern": "高层指挥"},
+    }
+    html = write_and_render(data)
+    assert '<html lang="zh">' in html
+
+
+def test_html_lang_english_default(write_and_render):
+    data = {
+        "header": {"title": "English Report"},
+        "at_a_glance": {"whats_working": "User ships fast across multiple agents."},
+    }
+    html = write_and_render(data)
+    assert '<html lang="en">' in html
+
+
+def test_html_lang_explicit_override(write_and_render):
+    """header.lang takes precedence even if content suggests otherwise."""
+    data = {
+        "header": {"title": "中文标题", "lang": "ja"},
+        "at_a_glance": {"whats_working": "全部都是中文内容"},
+    }
+    html = write_and_render(data)
+    assert '<html lang="ja">' in html

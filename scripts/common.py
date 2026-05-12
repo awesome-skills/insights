@@ -125,6 +125,31 @@ class DiscardList(list):
 
 # ----------------- helpers ------------------
 
+_SAFE_ID_CHARS = re.compile(r"[^A-Za-z0-9._-]")
+_MAX_SAFE_ID_LEN = 128
+
+
+def safe_session_id(raw: str, fallback: str = "unknown") -> str:
+    """Return a session id safe to use as a filename component.
+
+    Session ids come from external data — Gemini reads `sessionId` from the
+    session JSON, OpenCode reads it from SQLite. A hostile or corrupted source
+    could supply `../../etc/passwd`, an absolute path, or a 10 MB string.
+    Without sanitisation, `meta_dir / f"{session_id}.json"` then escapes the
+    workspace via Path's segment semantics.
+
+    Strip anything that isn't `[A-Za-z0-9._-]`, cap length, and refuse `..`
+    or `.` as the whole result.
+    """
+    if not raw:
+        return fallback
+    cleaned = _SAFE_ID_CHARS.sub("_", str(raw))[:_MAX_SAFE_ID_LEN]
+    cleaned = cleaned.strip("._-")
+    if not cleaned or cleaned in (".", ".."):
+        return fallback
+    return cleaned
+
+
 def truncate(s: str, n: int = 200) -> str:
     s = (s or "").strip()
     if len(s) <= n:
