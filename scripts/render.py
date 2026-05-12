@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -18,6 +19,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'PingFang SC', s
 h1 { font-size: 30px; font-weight: 700; color: #0f172a; margin-bottom: 8px; }
 h2 { font-size: 20px; font-weight: 600; color: #0f172a; margin-top: 44px; margin-bottom: 14px; }
 .subtitle { color: #64748b; font-size: 14px; margin-bottom: 24px; }
+.share-warning { background: #fff7ed; border: 1px solid #fdba74; border-radius: 8px;
+                 color: #9a3412; font-size: 12.5px; line-height: 1.55;
+                 padding: 10px 12px; margin: 0 0 22px 0; }
+.share-warning strong { color: #7c2d12; }
 .nav-toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 20px 0 28px 0; padding: 14px;
            background: white; border-radius: 8px; border: 1px solid #e2e8f0; }
 .nav-toc a { font-size: 12px; color: #64748b; text-decoration: none; padding: 6px 10px;
@@ -117,6 +122,18 @@ def _esc(s) -> str:
     return html.escape(str(s))
 
 
+def _as_dict(v) -> dict:
+    return v if isinstance(v, dict) else {}
+
+
+def _as_list(v) -> list:
+    return v if isinstance(v, list) else []
+
+
+def _text(v) -> str:
+    return "" if v is None else str(v)
+
+
 _BAR_COLOR_CYCLE = ("c1", "c2", "c3", "c4", "c5")
 
 
@@ -128,21 +145,31 @@ def _bar_chart(title: str, counts: dict[str, int], top_n: int = 8, color_class: 
     `_BAR_COLOR_CYCLE` so the top bars get visual differentiation — closer to
     the original /insights aesthetic.
     """
-    if not counts:
+    if not isinstance(counts, dict) or not counts:
         return ""
-    items = sorted(counts.items(), key=lambda x: -x[1])[:top_n]
+    numeric_items = []
+    for k, v in counts.items():
+        try:
+            n = float(v)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(n) or n <= 0:
+            continue
+        display = int(n) if n.is_integer() else n
+        numeric_items.append((k, n, display))
+    items = sorted(numeric_items, key=lambda x: -x[1])[:top_n]
     if not items:
         return ""
-    max_v = max(v for _, v in items) or 1
+    max_v = max(v for _, v, _ in items) or 1
     rows = []
-    for idx, (k, v) in enumerate(items):
+    for idx, (k, v, display) in enumerate(items):
         pct = int(round(v / max_v * 100))
         cc = color_class or _BAR_COLOR_CYCLE[idx % len(_BAR_COLOR_CYCLE)]
         rows.append(
             f'<div class="bar-row">'
             f'<span class="bar-label">{_esc(k)}</span>'
             f'<span class="bar-track"><span class="bar-fill {cc}" style="width:{pct}%"></span></span>'
-            f'<span class="bar-value">{v}</span></div>'
+            f'<span class="bar-value">{_esc(display)}</span></div>'
         )
     return (
         f'<div class="chart-card"><div class="chart-title">{_esc(title)}</div>'
@@ -160,7 +187,7 @@ def _section(anchor: str, title: str, body: str) -> str:
 
 
 def _glance(report: dict) -> str:
-    g = report.get("at_a_glance") or {}
+    g = _as_dict(report.get("at_a_glance"))
     if not g:
         return ""
     parts = []
@@ -187,7 +214,7 @@ def _project_areas(report: dict) -> str:
     # Accept either {"project_areas": {"areas": [...]}} or {"project_areas": [...]}.
     raw = report.get("project_areas")
     if isinstance(raw, dict):
-        pa = raw.get("areas") or []
+        pa = _as_list(raw.get("areas"))
     elif isinstance(raw, list):
         pa = raw
     else:
@@ -196,6 +223,8 @@ def _project_areas(report: dict) -> str:
         return ""
     rows = []
     for a in pa:
+        if not isinstance(a, dict):
+            continue
         rows.append(
             '<div class="project-area">'
             '<div class="area-header">'
@@ -209,27 +238,32 @@ def _project_areas(report: dict) -> str:
 
 
 def _interaction(report: dict) -> str:
-    i = report.get("interaction_style") or {}
+    i = _as_dict(report.get("interaction_style"))
     if not i:
         return ""
-    n = (i.get("narrative") or "").strip()
+    n = _text(i.get("narrative")).strip()
+    key_pattern = _text(i.get("key_pattern")).strip()
+    if not n and not key_pattern:
+        return ""
     # split paragraphs on blank lines
     paras = [p.strip() for p in n.split("\n\n") if p.strip()]
     body = "".join(f"<p>{_esc(p)}</p>" for p in paras) if paras else f"<p>{_esc(n)}</p>"
     insight = ""
-    if i.get("key_pattern"):
-        insight = f'<div class="key-insight"><strong>Key pattern:</strong> {_esc(i["key_pattern"])}</div>'
+    if key_pattern:
+        insight = f'<div class="key-insight"><strong>Key pattern:</strong> {_esc(key_pattern)}</div>'
     return f'<div class="narrative">{body}{insight}</div>'
 
 
 def _what_works(report: dict) -> str:
-    w = report.get("what_works") or {}
+    w = _as_dict(report.get("execution_strengths")) or _as_dict(report.get("what_works"))
     intro = w.get("intro") or ""
-    items = w.get("impressive_workflows") or []
+    items = _as_list(w.get("impressive_workflows"))
     body = ""
     if intro:
         body += f'<p class="section-intro">{_esc(intro)}</p>'
     for it in items:
+        if not isinstance(it, dict):
+            continue
         body += (
             '<div class="big-win">'
             f'<div class="big-win-title">{_esc(it.get("title", ""))}</div>'
@@ -240,15 +274,18 @@ def _what_works(report: dict) -> str:
 
 
 def _friction(report: dict) -> str:
-    f = report.get("friction_analysis") or {}
+    f = _as_dict(report.get("reliability_risks")) or _as_dict(report.get("friction_analysis"))
     body = ""
     if f.get("intro"):
         body += f'<p class="section-intro">{_esc(f["intro"])}</p>'
-    for c in f.get("categories") or []:
+    for c in _as_list(f.get("categories")):
+        if not isinstance(c, dict):
+            continue
         ex_html = ""
-        if c.get("examples"):
+        examples = _as_list(c.get("examples"))
+        if examples:
             ex_html = '<ul class="friction-examples">' + "".join(
-                f"<li>{_esc(x)}</li>" for x in c["examples"]
+                f"<li>{_esc(x)}</li>" for x in examples
             ) + "</ul>"
         body += (
             '<div class="friction-category">'
@@ -260,39 +297,52 @@ def _friction(report: dict) -> str:
 
 
 def _suggestions(report: dict) -> str:
-    s = report.get("suggestions") or {}
+    s = _as_dict(report.get("suggestions"))
     body = ""
 
-    cm = s.get("claude_md_additions") or []
+    cm = [it for it in (_as_list(s.get("guidance_file_additions")) or _as_list(s.get("claude_md_additions"))) if isinstance(it, dict)]
     if cm:
-        items = "".join(
-            '<div class="claude-md-item">'
-            f'<code class="cmd-code">{_esc(it.get("addition", ""))}</code>'
-            f'<div class="cmd-why"><strong>Why:</strong> {_esc(it.get("why", ""))}</div>'
-            "</div>"
-            for it in cm
-        )
+        agent = _as_dict(report.get("header")).get("agent")
+        heading = "Suggested AGENTS.md / OpenCode guidance additions" if agent == "opencode" else "Suggested guidance file additions"
+        items = ""
+        for it in cm:
+            target = it.get("target_file") or it.get("target") or ""
+            target_html = ""
+            if target:
+                target_html = f'<div class="cmd-why"><strong>Target:</strong> {_esc(target)}</div>'
+            items += (
+                '<div class="claude-md-item">'
+                f'<code class="cmd-code">{_esc(it.get("addition", ""))}</code>'
+                f"{target_html}"
+                f'<div class="cmd-why"><strong>Why:</strong> {_esc(it.get("why", ""))}</div>'
+                "</div>"
+            )
         body += (
             '<div class="claude-md-section">'
-            "<h3>Suggested CLAUDE.md / AGENTS.md additions</h3>"
+            f"<h3>{_esc(heading)}</h3>"
             f"{items}</div>"
         )
 
-    ft = s.get("features_to_try") or []
+    ft = _as_list(s.get("capabilities_to_try")) or _as_list(s.get("features_to_try"))
     for it in ft:
+        if not isinstance(it, dict):
+            continue
         ex = ""
-        if it.get("example_code"):
-            ex = f'<div class="prompt-label">Example</div><pre class="feature-code"><code>{_esc(it["example_code"])}</code></pre>'
+        example = it.get("example") or it.get("example_code")
+        if example:
+            ex = f'<div class="prompt-label">Example</div><pre class="feature-code"><code>{_esc(example)}</code></pre>'
         body += (
             '<div class="feature-card">'
-            f'<div class="feature-title">{_esc(it.get("feature", ""))}</div>'
+            f'<div class="feature-title">{_esc(it.get("capability") or it.get("feature", ""))}</div>'
             f'<div class="feature-oneliner">{_esc(it.get("one_liner", ""))}</div>'
             f'<div class="feature-why">{_esc(it.get("why_for_you", ""))}</div>'
             f"{ex}</div>"
         )
 
-    up = s.get("usage_patterns") or []
+    up = _as_list(s.get("usage_patterns"))
     for it in up:
+        if not isinstance(it, dict):
+            continue
         prompt = ""
         if it.get("copyable_prompt"):
             prompt = f'<div class="prompt-label">Copyable prompt</div><pre class="copyable-prompt">{_esc(it["copyable_prompt"])}</pre>'
@@ -307,12 +357,47 @@ def _suggestions(report: dict) -> str:
     return body
 
 
+def _codex_native_dimensions(report: dict) -> str:
+    dims = _as_dict(report.get("codex_native_dimensions"))
+    if not dims:
+        return ""
+    labels = {
+        "instruction_handling": "Instruction Handling",
+        "tool_execution": "Tool Execution",
+        "verification_quality": "Verification Quality",
+        "handoff_quality": "Handoff Quality",
+        "autonomy_boundary": "Autonomy Boundary",
+    }
+    body = ""
+    for key, label in labels.items():
+        item = _as_dict(dims.get(key))
+        if not item:
+            continue
+        examples = _as_list(item.get("examples"))
+        ex_html = ""
+        if examples:
+            ex_html = '<ul class="friction-examples">' + "".join(
+                f"<li>{_esc(x)}</li>" for x in examples
+            ) + "</ul>"
+        body += (
+            '<div class="project-area">'
+            '<div class="area-header">'
+            f'<span class="area-name">{_esc(label)}</span>'
+            '</div>'
+            f'<div class="area-desc">{_esc(item.get("summary", ""))}</div>'
+            f'{ex_html}</div>'
+        )
+    return body
+
+
 def _horizon(report: dict) -> str:
-    h = report.get("on_the_horizon") or {}
+    h = _as_dict(report.get("on_the_horizon"))
     body = ""
     if h.get("intro"):
         body += f'<p class="section-intro">{_esc(h["intro"])}</p>'
-    for op in h.get("opportunities") or []:
+    for op in _as_list(h.get("opportunities")):
+        if not isinstance(op, dict):
+            continue
         prompt = ""
         if op.get("copyable_prompt"):
             prompt = f'<div class="prompt-label">Copyable prompt</div><pre class="copyable-prompt">{_esc(op["copyable_prompt"])}</pre>'
@@ -329,7 +414,7 @@ def _horizon(report: dict) -> str:
 
 
 def _stats_row(report: dict) -> str:
-    h = report.get("header") or {}
+    h = _as_dict(report.get("header"))
     items = [
         ("Sessions", h.get("total_sessions")),
         ("Analyzed", h.get("analyzed_sessions")),
@@ -370,8 +455,16 @@ def _toc(present_anchors: list[tuple[str, str]]) -> str:
     ) + "</div>"
 
 
+def _share_warning() -> str:
+    return (
+        '<div class="share-warning"><strong>Review before sharing:</strong> '
+        'this report may include prompts, file paths, or tool output from your local sessions. '
+        'Remove secrets or private customer/internal details before sending it elsewhere.</div>'
+    )
+
+
 def _charts(report: dict) -> str:
-    s = report.get("stats") or {}
+    s = _as_dict(report.get("stats"))
     parts = []
     # color_class=None lets _bar_chart cycle through the palette for visual
     # contrast inside each chart, matching the original /insights look.
@@ -390,7 +483,7 @@ def _charts(report: dict) -> str:
 
 
 def _fun(report: dict) -> str:
-    f = report.get("fun_ending") or {}
+    f = _as_dict(report.get("fun_ending"))
     if not f.get("headline"):
         return ""
     return (
@@ -408,14 +501,14 @@ def _detect_lang(data: dict) -> str:
     Default `lang="en"` hurts assistive tech and browser language detection
     when the LLM wrote a Chinese report.
     """
-    header = data.get("header") or {}
+    header = _as_dict(data.get("header"))
     explicit = header.get("lang")
     if explicit:
         return str(explicit)
     sample = " ".join([
-        str((data.get("at_a_glance") or {}).get("whats_working", "")),
-        str((data.get("interaction_style") or {}).get("narrative", "")),
-        str((data.get("friction_analysis") or {}).get("intro", "")),
+        str(_as_dict(data.get("at_a_glance")).get("whats_working", "")),
+        str(_as_dict(data.get("interaction_style")).get("narrative", "")),
+        str((_as_dict(data.get("reliability_risks")) or _as_dict(data.get("friction_analysis"))).get("intro", "")),
         str(header.get("title", "")),
     ])[:2000]
     if not sample:
@@ -426,7 +519,7 @@ def _detect_lang(data: dict) -> str:
 
 def render(data_path: str, out_path: str) -> int:
     data = json.loads(Path(data_path).expanduser().read_text(encoding="utf-8"))
-    header = data.get("header", {})
+    header = _as_dict(data.get("header"))
     title = header.get("title") or f"{header.get('agent', 'Agent').replace('-', ' ').title()} Insights"
     lang = _detect_lang(data)
     subtitle_parts = []
@@ -442,6 +535,7 @@ def render(data_path: str, out_path: str) -> int:
     section_specs = [
         ("project-areas", "Project Areas", _project_areas(data)),
         ("interaction", "Interaction Style", _interaction(data)),
+        ("codex-dimensions", "Codex-Native Dimensions", _codex_native_dimensions(data)),
         ("what-works", "Impressive Things You Did", _what_works(data)),
         ("friction", "Where Things Go Wrong", _friction(data)),
         ("suggestions", "Suggestions", _suggestions(data)),
@@ -454,6 +548,7 @@ def render(data_path: str, out_path: str) -> int:
     body.append(f"<h1>{_esc(title)}</h1>")
     if subtitle:
         body.append(f'<div class="subtitle">{subtitle}</div>')
+    body.append(_share_warning())
     body.append(_toc(present))
     body.append(_stats_row(data))
     body.append(_glance(data))

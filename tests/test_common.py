@@ -114,6 +114,29 @@ class TestExtractBashPaths:
         assert len(result) == 5
 
 
+# ------------- extract_patch_paths -------------
+
+class TestExtractPatchPaths:
+    def test_apply_patch_headers(self):
+        patch = """*** Begin Patch
+*** Add File: src/new_feature.py
++print("ok")
+*** Update File: README.md
+*** Move to: docs/README.md
+@@
+-old
++new
+*** Delete File: obsolete.txt
+*** End Patch
+"""
+        assert common.extract_patch_paths(patch) == [
+            "src/new_feature.py",
+            "README.md",
+            "docs/README.md",
+            "obsolete.txt",
+        ]
+
+
 # ------------- count_git_actions -------------
 
 class TestGitActions:
@@ -165,3 +188,18 @@ class TestSafeSessionId:
         sid = common.safe_session_id("会话/01")
         assert "/" not in sid
         assert sid != ""
+
+    def test_sanitized_ids_do_not_collide_with_safe_ids(self):
+        assert common.safe_session_id("a/b") != common.safe_session_id("a_b")
+        assert common.safe_session_id("/a_b") != common.safe_session_id("a/b")
+
+    def test_truncated_ids_keep_collision_resistant_suffix(self):
+        sid1 = common.safe_session_id("a" * 200 + "1")
+        sid2 = common.safe_session_id("a" * 200 + "2")
+        assert sid1 != sid2
+        assert len(sid1) <= 128
+        assert len(sid2) <= 128
+
+    def test_cleaned_empty_ids_do_not_collide_with_fallback(self):
+        assert common.safe_session_id("///") != common.safe_session_id("unknown")
+        assert common.safe_session_id("///") != common.safe_session_id("\\\\\\")

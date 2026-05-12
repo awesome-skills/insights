@@ -18,7 +18,7 @@ get a beautiful, self-contained HTML usage report.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-46%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](tests/)
 [![Agents](https://img.shields.io/badge/agents-4-purple.svg)](#-supported-agents)
 [![Stdlib only](https://img.shields.io/badge/deps-stdlib%20only-success.svg)](#-requirements)
 
@@ -30,14 +30,16 @@ get a beautiful, self-contained HTML usage report.
 
 ## ✨ Why
 
-Claude Code ships a `/insights` command that turns your session history into a
-thoughtful usage report. It's brilliant — and it only works in Claude Code.
+Coding agents leave rich local session history behind, but each one uses a
+different storage format, token semantics, tool-event shape, and command entry.
+Raw logs make it hard to answer the questions that matter: what did you ask the
+agent to do, which workflows actually worked, which failures repeated, and which
+repo instructions or prompt patterns should be made durable?
 
-If you switch between **Codex**, **Gemini CLI**, **OpenCode**, or all of them,
-your usage data lives in four different formats on disk and goes unused.
-
-**`insights`** unifies them. One install, one command, one HTML report — no
-matter which agent you're currently talking to.
+**`insights`** unifies those records into one offline report. The report uses a
+Codex-native execution lens — instruction context, tool execution, verification
+evidence, and handoff quality — while keeping the schema agent-neutral so
+Claude Code, Codex, Gemini CLI, and OpenCode can all emit the same shape.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -65,6 +67,19 @@ Then, in any installed agent:
 
 That's it. Open the HTML file path it prints at the end.
 
+Common args:
+
+```bash
+/insights --days 30 --limit 50 --out ~/Desktop/insights.html
+```
+
+You can also run the CLI directly:
+
+```bash
+python3 scripts/insights.py metadata --agent codex --days 30 --limit 50
+python3 scripts/insights.py render --data report.json --out report.html
+```
+
 ## 🧭 Supported agents
 
 | Agent | Session storage | Format |
@@ -89,8 +104,8 @@ Four observations in one box: what's working, what's getting in your way, quick 
 ### 🗺️ Project areas
 Your sessions clustered by what you were actually working on — backend refactors, multi-agent reviews, doc writing — with session counts.
 
-### 🎭 Interaction style
-A 2-3 paragraph narrative of *how* you drive the agent: spec-first vs iterative? Supervisor or hands-on? With one key-pattern callout.
+### 🎭 Operating style
+A 2-3 paragraph narrative of how you set goals, constrain scope, and supervise execution.
 
 ### ⭐ Impressive things you did
 Workflow moves worth keeping. Concrete, evidence-anchored.
@@ -102,7 +117,7 @@ Workflow moves worth keeping. Concrete, evidence-anchored.
 Recurring friction with specific session examples. Honest about what the agent got wrong.
 
 ### 💡 Suggestions
-Paste-ready `CLAUDE.md`/`AGENTS.md` additions, features to try (Skills, Hooks, MCP, etc.), and copyable prompt patterns.
+Paste-ready guidance for `AGENTS.md` / `CLAUDE.md` / command files, capabilities to try, and copyable prompt patterns.
 
 ### 🚀 On the horizon
 Ambitious workflows your usage hints at — autonomous review loops, scheduled stewards, spec-driven generation.
@@ -144,30 +159,63 @@ host LLM (creative, context-aware). They meet at a JSON intermediate layer.
 ```
 
 The host LLM (Claude, GPT, Gemini, whatever you're using) does the qualitative
-work — writing observations, clustering projects, suggesting changes — and the
-skill's Python layer keeps the mechanical work consistent across agents.
+work: clustering projects, judging instruction handling, evaluating tool
+execution and verification evidence, and writing actionable suggestions. The
+Python layer keeps mechanical metadata/facet/report generation consistent across agents.
 
 ## 🛠 Install options
 
 ```bash
 bash install/install.sh             # install everywhere detected
 bash install/install.sh --status    # show what's currently linked
-bash install/install.sh --uninstall # remove symlinks
+bash install/install.sh --uninstall # remove entries managed by this installer
 bash install/install.sh --force     # overwrite existing entries
 bash install/install.sh --dry-run   # print actions without doing them
 ```
 
-After install, each agent gets a slash command pointing at this skill:
+After install, each agent gets an entry pointing at this skill. Claude/Gemini use
+symlinks; OpenCode/Codex use rendered command/prompt files with absolute paths:
 
 ```
 ~/.claude/skills/insights/                     ← Claude Code (auto-discovered)
 ~/.gemini/commands/insights.toml               ← Gemini CLI
 ~/.config/opencode/commands/insights.md        ← OpenCode
-~/.codex/prompts/insights.md                   ← Codex
+~/.codex/prompts/insights.md                   ← Codex (or $CODEX_HOME/prompts/insights.md)
 ```
 
 The installer refuses to write through symlinked parent directories and never
 clobbers existing entries unless you pass `--force`.
+
+## 🟦 Codex support
+
+Codex is not treated as just another JSONL source. The adapter understands
+Codex rollout events such as `function_call`, `custom_tool_call` (`apply_patch`),
+`web_search_call`, `event_msg`, MCP tool events, `turn_context`, and
+`session_meta`, so reports can reflect model/effort, approval and sandbox mode,
+web search, subagents, compaction/rollback, patch files, verification commands,
+and tool failures. Codex reasoning summaries are treated as internal execution
+context, not user-visible transcript text.
+
+Codex reports prioritize suggestions around `AGENTS.md` rules, subagents, local
+code review, web search, MCP, approval modes, `codex exec` automation, and the
+evidence chain: changed files, tests, browser smoke checks, and unverified risks.
+
+## 🟨 OpenCode support
+
+OpenCode stores sessions in local SQLite, not JSONL. `insights` opens
+`~/.local/share/opencode/opencode.db` read-only and parses `text`, `tool`,
+`file`, `subtask`, and `patch` parts from the message / part tables. Reports can
+therefore reflect tool calls, failed tool states, subtask usage, image/file
+attachments, touched files, and language distribution.
+
+Token accounting is OpenCode-specific: input uses the peak of
+`input + cache.read + cache.write` so cumulative context is not added repeatedly;
+output is summed per turn. `metadata` mode strips large tool output and file
+content before parsing parts, keeping batch scans lighter.
+
+For installation, OpenCode uses a rendered command file at
+`~/.config/opencode/commands/insights.md` with this skill's absolute path. Older
+template symlinks are upgraded to rendered files on reinstall.
 
 ## 📦 Requirements
 
@@ -196,9 +244,9 @@ insights/
 │       ├── claude_code.py      # skip sub-agent dirs + isSidechain events,
 │       │                       #   recover <command-args> body
 │       ├── codex.py            # skip sub-agent rollouts (payload.source.subagent),
-│       │                       #   strict system-injection filtering
+│       │                       #   parse turn_context/event_msg/MCP/patch/web search
 │       ├── gemini.py           # 50MB file cap, non-dict guard, id round-trip
-│       └── opencode.py         # read-only SQLite, max-of-(input+cache.read) tokens
+│       └── opencode.py         # read-only SQLite, tool/file/subtask/patch, peak context tokens
 │
 ├── references/
 │   ├── facet_schema.md         # per-session JSON the LLM must produce
@@ -210,7 +258,7 @@ insights/
 │   ├── opencode-command.md     # OpenCode slash-command (Markdown frontmatter)
 │   └── codex-prompt.md         # Codex prompt (Markdown frontmatter)
 │
-└── tests/                      # 46 pytest cases, ~0.1s to run
+└── tests/                      # pytest regression suite, ~0.1s to run
     ├── conftest.py             # path setup
     ├── test_common.py          # system-injection filter, Bash paths, git actions
     ├── test_adapters.py        # one fixture per agent + regression pins
@@ -269,7 +317,7 @@ pip install pytest
 pytest tests/
 ```
 
-46 cases cover what we shipped fixes for:
+The tests cover the critical bugs we pinned:
 
 - Sub-agent rollout exclusion (Claude Code subdirs + Codex `payload.source.subagent`)
 - System-injection filtering — strict enough to keep real `<system>` user text

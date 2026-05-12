@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -25,6 +26,8 @@ _BASH_PATH_EXT_RE = re.compile(
     r"(?![A-Za-z0-9])"
 )
 
+_PATCH_PATH_RE = re.compile(r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$")
+
 
 def extract_bash_paths(command: str, limit: int = 12) -> list[str]:
     """Return file paths referenced by a Bash command string.
@@ -40,6 +43,23 @@ def extract_bash_paths(command: str, limit: int = 12) -> list[str]:
         candidate = m.group(1)
         if candidate not in seen:
             seen.append(candidate)
+            if len(seen) >= limit:
+                break
+    return seen
+
+
+def extract_patch_paths(patch_text: str, limit: int = 100) -> list[str]:
+    """Return file paths mentioned in an apply_patch-style patch."""
+    if not patch_text:
+        return []
+    seen = []
+    for line in str(patch_text).splitlines():
+        m = _PATCH_PATH_RE.match(line.strip())
+        if not m:
+            continue
+        path = m.group(1).strip()
+        if path and path not in seen:
+            seen.append(path)
             if len(seen) >= limit:
                 break
     return seen
@@ -99,6 +119,24 @@ class SessionMetadata:
     files_modified: int = 0
     files_touched: list[str] = field(default_factory=list)
     message_hours: list[int] = field(default_factory=list)
+    model: str = ""
+    reasoning_effort: str = ""
+    approval_policy: str = ""
+    sandbox_policy: str = ""
+    collaboration_mode: str = ""
+    cli_version: str = ""
+    model_provider: str = ""
+    originator: str = ""
+    memory_mode: str = ""
+    thread_source: str = ""
+    agent_role: str = ""
+    reasoning_output_tokens: int = 0
+    compactions: int = 0
+    rollbacks: int = 0
+    patches_applied: int = 0
+    patches_failed: int = 0
+    image_inputs: int = 0
+    mcp_calls: int = 0
 
 
 @dataclass
@@ -143,11 +181,22 @@ def safe_session_id(raw: str, fallback: str = "unknown") -> str:
     """
     if not raw:
         return fallback
-    cleaned = _SAFE_ID_CHARS.sub("_", str(raw))[:_MAX_SAFE_ID_LEN]
+    raw_s = str(raw)
+    cleaned_full = _SAFE_ID_CHARS.sub("_", raw_s)
+    cleaned = cleaned_full[:_MAX_SAFE_ID_LEN]
     cleaned = cleaned.strip("._-")
-    if not cleaned or cleaned in (".", ".."):
+    if raw_s in (".", ".."):
         return fallback
-    return cleaned
+    digest = hashlib.sha256(raw_s.encode("utf-8", errors="replace")).hexdigest()[:8]
+    if not cleaned or cleaned in (".", ".."):
+        return f"{fallback}-{digest}"
+    if cleaned == raw_s and len(raw_s) <= _MAX_SAFE_ID_LEN:
+        return cleaned
+    suffix = f"-{digest}"
+    base = cleaned[: _MAX_SAFE_ID_LEN - len(suffix)].strip("._-") or fallback
+    if base in (".", ".."):
+        base = fallback
+    return f"{base}{suffix}"
 
 
 def truncate(s: str, n: int = 200) -> str:
@@ -197,8 +246,8 @@ def count_git_actions(command: str) -> tuple[int, int]:
 MAX_JSONL_LINE_BYTES = 8 * 1024 * 1024
 
 
-_TOOL_INPUT_KEYS = ("command", "file_path", "filePath", "path", "url")
-_FILE_KEYS = ("file_path", "filePath", "path")
+_TOOL_INPUT_KEYS = ("command", "cmd", "file_path", "filePath", "path", "file", "url")
+_FILE_KEYS = ("file_path", "filePath", "path", "file")
 
 
 # Exact opening tokens that mark a message as a harness/system payload.
@@ -320,7 +369,7 @@ def extract_tool_input(args) -> tuple[str, str]:
 # happens to contain "agent" like `agent-inspect`).
 _TASK_AGENT_TOOL_NAMES = {
     "Task", "Agent", "TaskCreate", "TaskUpdate", "TaskGet", "TaskList",
-    "dispatch_agent", "spawn_agent", "subagent",
+    "dispatch_agent", "spawn_agent", "subagent", "subtask",
 }
 
 
@@ -344,7 +393,9 @@ def aggregate_message(meta: SessionMetadata, msg: NormalizedMessage) -> None:
     meta.output_tokens += msg.tokens_out
     if msg.is_error:
         meta.tool_errors += 1
-    if msg.tool_name:
+        if msg.tool_name:
+            meta.tool_error_categories[msg.tool_name] = meta.tool_error_categories.get(msg.tool_name, 0) + 1
+    if msg.tool_name and msg.role == "tool_use":
         meta.tool_counts[msg.tool_name] = meta.tool_counts.get(msg.tool_name, 0) + 1
         lower = msg.tool_name.lower()
         if msg.tool_name in _TASK_AGENT_TOOL_NAMES or lower.startswith("task"):
@@ -355,7 +406,7 @@ def aggregate_message(meta: SessionMetadata, msg: NormalizedMessage) -> None:
             meta.uses_web_search = True
         if "webfetch" in lower or "web_fetch" in lower:
             meta.uses_web_fetch = True
-        if msg.tool_name in {"Bash", "shell", "execute", "exec_command"}:
+        if lower in {"bash", "shell", "execute", "exec_command"}:
             c, p = count_git_actions(msg.text)
             meta.git_commits += c
             meta.git_pushes += p
@@ -378,6 +429,7 @@ def finalize_metadata(meta: SessionMetadata) -> None:
     if meta.files_touched:
         seen = []
         for f in meta.files_touched:
+            f = _normalize_touched_path(f, meta.project_path)
             if f and f not in seen:
                 seen.append(f)
         meta.files_touched = seen[:200]
@@ -386,6 +438,21 @@ def finalize_metadata(meta: SessionMetadata) -> None:
             lang = detect_language(f)
             if lang:
                 meta.languages[lang] = meta.languages.get(lang, 0) + 1
+
+
+def _normalize_touched_path(path: str, project_path: str = "") -> str:
+    if not path:
+        return ""
+    text = str(path)
+    if project_path:
+        try:
+            p = Path(text)
+            root = Path(project_path)
+            if p.is_absolute():
+                return str(p.resolve().relative_to(root.resolve()))
+        except (OSError, ValueError):
+            return text
+    return text
 
 
 def metadata_to_dict(m: SessionMetadata) -> dict[str, Any]:

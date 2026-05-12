@@ -50,6 +50,29 @@ def test_full_report_renders_all_sections(write_and_render):
         assert f'id="{anchor}"' in html, f"section {anchor} missing"
 
 
+def test_agent_neutral_report_fields_render(write_and_render):
+    data = {
+        "header": {"agent": "codex", "title": "Codex"},
+        "codex_native_dimensions": {
+            "instruction_handling": {"summary": "Followed AGENTS.md", "examples": ["s1"]},
+            "verification_quality": {"summary": "Ran tests", "examples": ["s2"]},
+        },
+        "execution_strengths": {"impressive_workflows": [{"title": "Patch loop", "description": "desc"}]},
+        "reliability_risks": {"categories": [{"category": "Weak verification", "description": "desc"}]},
+        "suggestions": {
+            "guidance_file_additions": [{"target": "AGENTS.md", "addition": "Run tests", "why": "evidence"}],
+            "capabilities_to_try": [{"capability": "Codex subagents", "one_liner": "Parallel review", "example": "spawn reviewers"}],
+        },
+    }
+    html = write_and_render(data)
+    assert 'id="codex-dimensions"' in html
+    assert "Instruction Handling" in html
+    assert "Patch loop" in html
+    assert "Weak verification" in html
+    assert "Run tests" in html
+    assert "Codex subagents" in html
+
+
 def test_xss_payload_escaped(write_and_render):
     data = {
         "header": {"agent": "test", "title": "<script>alert(1)</script>"},
@@ -151,3 +174,61 @@ def test_html_lang_explicit_override(write_and_render):
     }
     html = write_and_render(data)
     assert '<html lang="ja">' in html
+
+
+def test_schema_drift_does_not_crash_renderer(write_and_render):
+    data = {
+        "header": {"agent": "test", "title": "Drift"},
+        "project_areas": ["bad item", None, {"name": "Ok", "session_count": "2", "description": "kept"}],
+        "what_works": {"impressive_workflows": ["bad", {"title": "Win", "description": "desc"}]},
+        "friction_analysis": {"categories": [None, "bad", {"category": "c", "examples": "not-a-list"}]},
+        "suggestions": {
+            "claude_md_additions": ["bad", {"addition": "Do X", "why": "reason"}],
+            "features_to_try": [None, {"feature": "Feature", "example_code": "x"}],
+            "usage_patterns": ["bad", {"title": "Pattern", "copyable_prompt": "prompt"}],
+        },
+        "on_the_horizon": {"opportunities": ["bad", {"title": "Next", "whats_possible": "thing"}]},
+        "stats": {"tool_counts": {"Bash": "5", "Bad": "NaN", "Negative": -1}},
+    }
+    html = write_and_render(data)
+    assert "Ok" in html
+    assert "Win" in html
+    assert "Bash" in html
+
+
+def test_html_contains_privacy_share_warning(write_and_render):
+    html = write_and_render({"header": {"agent": "test", "title": "Report"}})
+    assert "Review before sharing" in html
+    assert "may include prompts, file paths, or tool output" in html
+
+
+def test_scalar_schema_drift_does_not_crash_renderer(write_and_render):
+    html = write_and_render({
+        "header": {"agent": "test", "title": "Scalar Drift"},
+        "interaction_style": {"narrative": 123, "key_pattern": True},
+        "at_a_glance": "bad-shape",
+    })
+    assert "123" in html
+    assert "True" in html
+
+
+def test_guidance_file_additions_alias_and_opencode_heading(write_and_render):
+    html = write_and_render({
+        "header": {"agent": "opencode", "title": "OpenCode Report"},
+        "suggestions": {"guidance_file_additions": [
+            {"target_file": "AGENTS.md", "addition": "Use subagents for review", "why": "repeated reviews"}
+        ]},
+    })
+    assert "Suggested AGENTS.md / OpenCode guidance additions" in html
+    assert "Use subagents for review" in html
+    assert "AGENTS.md" in html
+
+
+def test_empty_schema_drift_does_not_render_empty_cards(write_and_render):
+    html = write_and_render({
+        "header": {"agent": "test"},
+        "interaction_style": {"narrative": "", "key_pattern": ""},
+        "suggestions": {"claude_md_additions": ["bad", None]},
+    })
+    assert 'id="interaction"' not in html
+    assert "Suggested CLAUDE.md" not in html

@@ -39,7 +39,26 @@ The final aggregated artifact consumed by `render.py`. Fields are all optional;
     "key_pattern": "One sentence."
   },
 
-  "what_works": {
+  "codex_native_dimensions": {
+    "instruction_handling": {
+      "summary": "1-2 sentences",
+      "examples": ["session-anchored example"]
+    },
+    "tool_execution": {
+      "summary": "1-2 sentences",
+      "examples": ["session-anchored example"]
+    },
+    "verification_quality": {
+      "summary": "1-2 sentences",
+      "examples": ["session-anchored example"]
+    },
+    "handoff_quality": {
+      "summary": "1-2 sentences",
+      "examples": ["session-anchored example"]
+    }
+  },
+
+  "execution_strengths": {
     "intro": "1 sentence framing.",
     "impressive_workflows": [
       {
@@ -49,7 +68,7 @@ The final aggregated artifact consumed by `render.py`. Fields are all optional;
     ]
   },
 
-  "friction_analysis": {
+  "reliability_risks": {
     "intro": "1 sentence framing.",
     "categories": [
       {
@@ -61,18 +80,19 @@ The final aggregated artifact consumed by `render.py`. Fields are all optional;
   },
 
   "suggestions": {
-    "claude_md_additions": [
+    "guidance_file_additions": [
       {
+        "target_file": "AGENTS.md | CLAUDE.md | command | other",
         "addition": "## Analysis vs Action\\nWhen asked...",
         "why": "1 sentence with evidence from sessions."
       }
     ],
-    "features_to_try": [
+    "capabilities_to_try": [
       {
-        "feature": "Custom Skills",
+        "capability": "Subagents, MCP/plugin use, browser smoke checks, custom commands, skills",
         "one_liner": "Reusable markdown-defined commands",
         "why_for_you": "1-2 sentences tied to user's actual patterns",
-        "example_code": "Optional snippet"
+        "example": "Optional command, prompt, or config snippet"
       }
     ],
     "usage_patterns": [
@@ -123,4 +143,13 @@ The final aggregated artifact consumed by `render.py`. Fields are all optional;
 - `header.commits` — sum of `git_commits`.
 - `header.date_range` — min start_time .. max end_time, formatted YYYY-MM-DD.
 
-The narrative blocks (`at_a_glance`, `interaction_style.narrative`, `friction_analysis.examples`) are the **point** of the skill. Spend tokens there, not on stats.
+The narrative blocks (`at_a_glance`, `interaction_style.narrative`, `reliability_risks.categories[].examples`) are the **point** of the skill. Spend tokens there, not on stats.
+
+Legacy aliases may be accepted by renderers for older reports:
+`what_works` → `execution_strengths`;
+`friction_analysis` → `reliability_risks`;
+`claude_md_additions` → `guidance_file_additions`;
+`features_to_try` → `capabilities_to_try`;
+`feature` → `capability`;
+`example_code` → `example`.
+New reports should emit only the agent-neutral names.
