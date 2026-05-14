@@ -33,6 +33,32 @@ h2 { font-size: 20px; font-weight: 600; color: #0f172a; margin-top: 44px; margin
 .stat { text-align: center; min-width: 90px; }
 .stat-value { font-size: 22px; font-weight: 700; color: #0f172a; }
 .stat-label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+.exec-summary { background: #fffdf7; border: 1px solid #d6b16a; border-radius: 14px;
+                padding: 22px; margin: 10px 0 28px 0; box-shadow: 0 10px 30px rgba(120, 83, 22, .06); }
+.exec-kicker { font-size: 11px; color: #8a5a12; font-weight: 700; letter-spacing: .12em;
+               text-transform: uppercase; margin-bottom: 8px; }
+.exec-headline { font-size: 23px; line-height: 1.25; color: #1f2937; font-weight: 750; margin-bottom: 8px; }
+.exec-one { font-size: 14px; color: #6b4f1d; margin-bottom: 16px; }
+.change-card { border-top: 1px solid #ead9b3; padding-top: 14px; margin-top: 14px; }
+.change-title { font-size: 15px; font-weight: 700; color: #0f172a; margin-bottom: 6px; }
+.change-meta { font-size: 13px; color: #475569; line-height: 1.55; margin-bottom: 5px; }
+.change-action { font-size: 13px; color: #075985; background: #f0f9ff; border: 1px solid #bae6fd;
+                 border-radius: 7px; padding: 8px 10px; margin-top: 8px; }
+.priority-list { background: white; border: 1px solid #dbe4ef; border-radius: 12px; padding: 16px; margin-bottom: 18px; }
+.priority-intro { font-size: 13.5px; color: #475569; margin-bottom: 12px; }
+.priority-item { display: grid; grid-template-columns: 42px 1fr; gap: 12px; padding: 12px 0;
+                 border-top: 1px solid #eef2f7; }
+.priority-item:first-of-type { border-top: none; padding-top: 0; }
+.priority-rank { width: 34px; height: 34px; border-radius: 50%; background: #0f172a; color: white;
+                 display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; }
+.priority-name { font-weight: 700; color: #0f172a; font-size: 15px; margin-bottom: 4px; }
+.priority-tags { font-size: 11px; color: #64748b; margin-bottom: 4px; }
+.priority-detail { font-size: 13px; color: #475569; line-height: 1.55; }
+.score-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin: 12px 0 18px; }
+.score-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; }
+.score-value { font-size: 24px; font-weight: 750; color: #0f172a; }
+.score-dim { font-size: 13px; font-weight: 700; color: #334155; margin-bottom: 4px; }
+.score-note { font-size: 12px; color: #64748b; line-height: 1.45; }
 .at-a-glance { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
                border: 1px solid #f59e0b; border-radius: 12px; padding: 18px 22px; margin-bottom: 28px; }
 .glance-title { font-size: 16px; font-weight: 700; color: #92400e; margin-bottom: 12px; }
@@ -186,17 +212,118 @@ def _section(anchor: str, title: str, body: str) -> str:
     return f'<h2 id="{anchor}">{_esc(title)}</h2>\n{body}'
 
 
+def _is_zh(report: dict) -> bool:
+    return str(_detect_lang(report)).lower().startswith("zh")
+
+
+def _agent_display(agent: object) -> str:
+    raw = str(agent or "Agent")
+    names = {
+        "claude-code": "Claude Code",
+        "codex": "Codex",
+        "gemini": "Gemini CLI",
+        "opencode": "OpenCode",
+    }
+    return names.get(raw, raw.replace("-", " ").title())
+
+
+def _executive_summary(report: dict) -> str:
+    ex = _as_dict(report.get("executive_summary"))
+    if not ex:
+        return ""
+    zh = _is_zh(report)
+    changes = []
+    for item in _as_list(ex.get("top_changes")):
+        if not isinstance(item, dict):
+            continue
+        parts = []
+        if item.get("why_it_matters"):
+            label = "为什么重要：" if zh else "Why it matters: "
+            parts.append(f'<div class="change-meta"><strong>{_esc(label)}</strong>{_esc(item["why_it_matters"])}</div>')
+        if item.get("evidence"):
+            label = "证据：" if zh else "Evidence: "
+            parts.append(f'<div class="change-meta"><strong>{_esc(label)}</strong>{_esc(item["evidence"])}</div>')
+        if item.get("action"):
+            label = "下一步：" if zh else "Next step: "
+            parts.append(f'<div class="change-action"><strong>{_esc(label)}</strong>{_esc(item["action"])}</div>')
+        changes.append(
+            '<div class="change-card">'
+            f'<div class="change-title">{_esc(item.get("title", ""))}</div>'
+            + "".join(parts)
+            + '</div>'
+        )
+    if not (ex.get("headline") or ex.get("one_sentence") or changes):
+        return ""
+    return (
+        '<div class="exec-summary">'
+        f'<div class="exec-kicker">{_esc("执行摘要" if zh else "Executive Summary")}</div>'
+        f'<div class="exec-headline">{_esc(ex.get("headline", ""))}</div>'
+        f'<div class="exec-one">{_esc(ex.get("one_sentence", ""))}</div>'
+        + "".join(changes)
+        + '</div>'
+    )
+
+
+def _priority_ladder(report: dict) -> str:
+    ladder = _as_dict(report.get("priority_ladder"))
+    items = _as_list(ladder.get("items"))
+    if not items:
+        return ""
+    zh = _is_zh(report)
+    rows = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        impact = "影响" if zh else "Impact"
+        effort = "成本" if zh else "Effort"
+        next_step = "下一步：" if zh else "Next step: "
+        rows.append(
+            '<div class="priority-item">'
+            f'<div class="priority-rank">{_esc(item.get("rank", ""))}</div>'
+            '<div>'
+            f'<div class="priority-name">{_esc(item.get("name", ""))}</div>'
+            f'<div class="priority-tags">{_esc(impact)}: {_esc(item.get("impact", ""))} · {_esc(effort)}: {_esc(item.get("effort", ""))}</div>'
+            f'<div class="priority-detail">{_esc(item.get("reason", ""))}</div>'
+            f'<div class="priority-detail"><strong>{_esc(next_step)}</strong>{_esc(item.get("next_step", ""))}</div>'
+            '</div></div>'
+        )
+    intro = f'<div class="priority-intro">{_esc(ladder.get("intro", ""))}</div>' if ladder.get("intro") else ""
+    return '<div class="priority-list">' + intro + "".join(rows) + '</div>'
+
+
+def _scorecard(report: dict) -> str:
+    scorecard = _as_dict(report.get("scorecard"))
+    scores = _as_list(scorecard.get("scores"))
+    if not scores:
+        return ""
+    intro = f'<p class="section-intro">{_esc(scorecard.get("summary", ""))}</p>' if scorecard.get("summary") else ""
+    cards = []
+    for s in scores:
+        if not isinstance(s, dict):
+            continue
+        cards.append(
+            '<div class="score-card">'
+            f'<div class="score-value">{_esc(s.get("score", ""))}/10</div>'
+            f'<div class="score-dim">{_esc(s.get("dimension", ""))}</div>'
+            f'<div class="score-note">{_esc(s.get("note", ""))}</div>'
+            '</div>'
+        )
+    return intro + '<div class="score-grid">' + "".join(cards) + '</div>'
+
+
 def _glance(report: dict) -> str:
     g = _as_dict(report.get("at_a_glance"))
     if not g:
         return ""
     parts = []
-    for label, key in [
-        ("✅ What's working", "whats_working"),
-        ("⚠️ What's hindering", "whats_hindering"),
-        ("⚡ Quick wins", "quick_wins"),
-        ("🚀 Ambitious workflows", "ambitious_workflows"),
-    ]:
+    zh = _is_zh(report)
+    labels = [
+        ("有效模式" if zh else "What's working", "whats_working"),
+        ("主要阻碍" if zh else "What's hindering", "whats_hindering"),
+        ("快速改进" if zh else "Quick wins", "quick_wins"),
+        ("进阶工作流" if zh else "Ambitious workflows", "ambitious_workflows"),
+    ]
+    for label, key in labels:
         if g.get(key):
             parts.append(
                 f'<div class="glance-section"><strong>{_esc(label)}:</strong> {_esc(g[key])}</div>'
@@ -204,7 +331,7 @@ def _glance(report: dict) -> str:
     if not parts:
         return ""
     return (
-        '<div class="at-a-glance"><div class="glance-title">At a Glance</div>'
+        f'<div class="at-a-glance"><div class="glance-title">{_esc("快速概览" if zh else "At a Glance")}</div>'
         + "".join(parts)
         + "</div>"
     )
@@ -221,6 +348,7 @@ def _project_areas(report: dict) -> str:
         pa = []
     if not pa:
         return ""
+    zh = _is_zh(report)
     rows = []
     for a in pa:
         if not isinstance(a, dict):
@@ -229,7 +357,7 @@ def _project_areas(report: dict) -> str:
             '<div class="project-area">'
             '<div class="area-header">'
             f'<span class="area-name">{_esc(a.get("name", ""))}</span>'
-            f'<span class="area-count">{_esc(a.get("session_count", "?"))} sessions</span>'
+            f'<span class="area-count">{_esc(a.get("session_count", "?"))} {"个会话" if zh else "sessions"}</span>'
             '</div>'
             f'<div class="area-desc">{_esc(a.get("description", ""))}</div>'
             '</div>'
@@ -250,7 +378,8 @@ def _interaction(report: dict) -> str:
     body = "".join(f"<p>{_esc(p)}</p>" for p in paras) if paras else f"<p>{_esc(n)}</p>"
     insight = ""
     if key_pattern:
-        insight = f'<div class="key-insight"><strong>Key pattern:</strong> {_esc(key_pattern)}</div>'
+        label = "核心模式" if _is_zh(report) else "Key pattern"
+        insight = f'<div class="key-insight"><strong>{_esc(label)}:</strong> {_esc(key_pattern)}</div>'
     return f'<div class="narrative">{body}{insight}</div>'
 
 
@@ -298,12 +427,18 @@ def _friction(report: dict) -> str:
 
 def _suggestions(report: dict) -> str:
     s = _as_dict(report.get("suggestions"))
+    zh = _is_zh(report)
     body = ""
 
     cm = [it for it in (_as_list(s.get("guidance_file_additions")) or _as_list(s.get("claude_md_additions"))) if isinstance(it, dict)]
     if cm:
         agent = _as_dict(report.get("header")).get("agent")
-        heading = "Suggested AGENTS.md / OpenCode guidance additions" if agent == "opencode" else "Suggested guidance file additions"
+        if zh:
+            heading = "建议加入的规则 / 命令模板"
+        elif agent == "opencode":
+            heading = "Suggested AGENTS.md / OpenCode guidance additions"
+        else:
+            heading = "Suggested guidance file additions"
         items = ""
         for it in cm:
             target = it.get("target_file") or it.get("target") or ""
@@ -330,7 +465,8 @@ def _suggestions(report: dict) -> str:
         ex = ""
         example = it.get("example") or it.get("example_code")
         if example:
-            ex = f'<div class="prompt-label">Example</div><pre class="feature-code"><code>{_esc(example)}</code></pre>'
+            ex_label = "示例" if zh else "Example"
+            ex = f'<div class="prompt-label">{_esc(ex_label)}</div><pre class="feature-code"><code>{_esc(example)}</code></pre>'
         body += (
             '<div class="feature-card">'
             f'<div class="feature-title">{_esc(it.get("capability") or it.get("feature", ""))}</div>'
@@ -345,7 +481,8 @@ def _suggestions(report: dict) -> str:
             continue
         prompt = ""
         if it.get("copyable_prompt"):
-            prompt = f'<div class="prompt-label">Copyable prompt</div><pre class="copyable-prompt">{_esc(it["copyable_prompt"])}</pre>'
+            prompt_label = "可复制提示词" if zh else "Copyable prompt"
+            prompt = f'<div class="prompt-label">{_esc(prompt_label)}</div><pre class="copyable-prompt">{_esc(it["copyable_prompt"])}</pre>'
         body += (
             '<div class="pattern-card">'
             f'<div class="pattern-title">{_esc(it.get("title", ""))}</div>'
@@ -358,16 +495,23 @@ def _suggestions(report: dict) -> str:
 
 
 def _codex_native_dimensions(report: dict) -> str:
-    dims = _as_dict(report.get("codex_native_dimensions"))
+    dims = _as_dict(report.get("opencode_native_dimensions")) or _as_dict(report.get("codex_native_dimensions"))
     if not dims:
         return ""
-    labels = {
+    zh = _is_zh(report)
+    labels = ({
+        "instruction_handling": "指令遵循",
+        "tool_execution": "工具执行",
+        "verification_quality": "验证质量",
+        "handoff_quality": "交接质量",
+        "autonomy_boundary": "自主边界",
+    } if zh else {
         "instruction_handling": "Instruction Handling",
         "tool_execution": "Tool Execution",
         "verification_quality": "Verification Quality",
         "handoff_quality": "Handoff Quality",
         "autonomy_boundary": "Autonomy Boundary",
-    }
+    })
     body = ""
     for key, label in labels.items():
         item = _as_dict(dims.get(key))
@@ -392,6 +536,7 @@ def _codex_native_dimensions(report: dict) -> str:
 
 def _horizon(report: dict) -> str:
     h = _as_dict(report.get("on_the_horizon"))
+    zh = _is_zh(report)
     body = ""
     if h.get("intro"):
         body += f'<p class="section-intro">{_esc(h["intro"])}</p>'
@@ -400,10 +545,12 @@ def _horizon(report: dict) -> str:
             continue
         prompt = ""
         if op.get("copyable_prompt"):
-            prompt = f'<div class="prompt-label">Copyable prompt</div><pre class="copyable-prompt">{_esc(op["copyable_prompt"])}</pre>'
+            prompt_label = "可复制提示词" if zh else "Copyable prompt"
+            prompt = f'<div class="prompt-label">{_esc(prompt_label)}</div><pre class="copyable-prompt">{_esc(op["copyable_prompt"])}</pre>'
         how = ""
         if op.get("how_to_try"):
-            how = f'<div class="feature-why" style="margin-top:8px;"><strong>How to try:</strong> {_esc(op["how_to_try"])}</div>'
+            how_label = "如何尝试：" if zh else "How to try: "
+            how = f'<div class="feature-why" style="margin-top:8px;"><strong>{_esc(how_label)}</strong>{_esc(op["how_to_try"])}</div>'
         body += (
             '<div class="horizon-card">'
             f'<div class="horizon-title">{_esc(op.get("title", ""))}</div>'
@@ -413,15 +560,43 @@ def _horizon(report: dict) -> str:
     return body
 
 
+def _success_metrics(report: dict) -> str:
+    metrics = _as_list(report.get("success_metrics"))
+    if not metrics:
+        return ""
+    zh = _is_zh(report)
+    intro = (
+        "下一份 insights 不应该只继续给建议，而要用这些指标判断 agent 使用方式是否真的改变。"
+        if zh else
+        "The next insights report should judge whether usage actually changed, not just repeat suggestions."
+    )
+    body = f'<p class="section-intro">{_esc(intro)}</p>'
+    for m in metrics:
+        if not isinstance(m, dict):
+            continue
+        target = "目标" if zh else "Target"
+        body += (
+            '<div class="project-area">'
+            '<div class="area-header">'
+            f'<span class="area-name">{_esc(m.get("metric", ""))}</span>'
+            f'<span class="area-count">{_esc(target)} {_esc(m.get("target", ""))}</span>'
+            '</div>'
+            f'<div class="area-desc">{_esc(m.get("how_to_measure", ""))}</div>'
+            '</div>'
+        )
+    return body
+
+
 def _stats_row(report: dict) -> str:
     h = _as_dict(report.get("header"))
+    zh = _is_zh(report)
     items = [
-        ("Sessions", h.get("total_sessions")),
-        ("Analyzed", h.get("analyzed_sessions")),
-        ("Messages", h.get("messages")),
-        ("Hours", h.get("hours")),
-        ("Commits", h.get("commits")),
-        ("Tokens (M)", _short_tokens(h.get("tokens"))),
+        ("会话总数" if zh else "Sessions", h.get("total_sessions")),
+        ("已分析" if zh else "Analyzed", h.get("analyzed_sessions")),
+        ("消息数" if zh else "Messages", h.get("messages")),
+        ("时长" if zh else "Hours", h.get("hours")),
+        ("提交" if zh else "Commits", h.get("commits")),
+        ("Tokens", _short_tokens(h.get("tokens"))),
     ]
     parts = []
     for label, v in items:
@@ -455,7 +630,13 @@ def _toc(present_anchors: list[tuple[str, str]]) -> str:
     ) + "</div>"
 
 
-def _share_warning() -> str:
+def _share_warning(report: dict) -> str:
+    if _is_zh(report):
+        return (
+            '<div class="share-warning"><strong>分享前复核：</strong>'
+            '这份报告可能包含本地会话里的 prompt、文件路径或工具输出。'
+            '转发前请删除密钥、客户信息或内部细节。</div>'
+        )
     return (
         '<div class="share-warning"><strong>Review before sharing:</strong> '
         'this report may include prompts, file paths, or tool output from your local sessions. '
@@ -466,16 +647,17 @@ def _share_warning() -> str:
 def _charts(report: dict) -> str:
     s = _as_dict(report.get("stats"))
     parts = []
+    zh = _is_zh(report)
     # color_class=None lets _bar_chart cycle through the palette for visual
     # contrast inside each chart, matching the original /insights look.
     if s.get("tool_counts"):
-        parts.append(_bar_chart("Top tools", s["tool_counts"]))
+        parts.append(_bar_chart("工具使用" if zh else "Top tools", s["tool_counts"]))
     if s.get("language_counts"):
-        parts.append(_bar_chart("Languages", s["language_counts"]))
+        parts.append(_bar_chart("文件语言" if zh else "Languages", s["language_counts"]))
     if s.get("goal_categories"):
-        parts.append(_bar_chart("Goal categories", s["goal_categories"]))
+        parts.append(_bar_chart("目标类型" if zh else "Goal categories", s["goal_categories"]))
     if s.get("friction_counts"):
-        parts.append(_bar_chart("Friction patterns", s["friction_counts"]))
+        parts.append(_bar_chart("摩擦模式" if zh else "Friction patterns", s["friction_counts"]))
     if not parts:
         return ""
     grid = '<div class="charts-row">' + "".join(parts) + "</div>"
@@ -520,27 +702,60 @@ def _detect_lang(data: dict) -> str:
 def render(data_path: str, out_path: str) -> int:
     data = json.loads(Path(data_path).expanduser().read_text(encoding="utf-8"))
     header = _as_dict(data.get("header"))
-    title = header.get("title") or f"{header.get('agent', 'Agent').replace('-', ' ').title()} Insights"
+    title = header.get("title") or f"{_agent_display(header.get('agent'))} Insights"
     lang = _detect_lang(data)
+    zh = str(lang).lower().startswith("zh")
     subtitle_parts = []
     if header.get("agent"):
-        subtitle_parts.append(_esc(header["agent"]))
+        subtitle_parts.append(_esc(_agent_display(header["agent"])))
     if header.get("date_range"):
         subtitle_parts.append(_esc(header["date_range"]))
     if header.get("total_sessions"):
-        subtitle_parts.append(f"{header['total_sessions']} sessions")
+        subtitle_parts.append(f"{header['total_sessions']} {'个会话' if zh else 'sessions'}")
     subtitle = " · ".join(subtitle_parts)
 
+    agent = str(header.get("agent") or "")
+    dimension_title_en = "OpenCode Execution Dimensions" if agent == "opencode" else "Execution Dimensions"
+    section_titles = {
+        "priority-ladder": "优先级阶梯",
+        "scorecard": "当前能力评分",
+        "project-areas": "项目领域",
+        "interaction": "协作风格",
+        "codex-dimensions": "执行维度",
+        "what-works": "表现突出的工作流",
+        "friction": "风险与摩擦",
+        "suggestions": "建议",
+        "on-the-horizon": "下一步机会",
+        "success-metrics": "7 天验收指标",
+        "charts": "统计图表",
+    } if zh else {
+        "priority-ladder": "Priority Ladder",
+        "scorecard": "Scorecard",
+        "project-areas": "Project Areas",
+        "interaction": "Interaction Style",
+        "codex-dimensions": "Codex-Native Dimensions",
+        "what-works": "Impressive Things You Did",
+        "friction": "Where Things Go Wrong",
+        "suggestions": "Suggestions",
+        "on-the-horizon": "On the Horizon",
+        "success-metrics": "Success Metrics",
+        "charts": "Charts",
+    }
+    if not zh:
+        section_titles["codex-dimensions"] = dimension_title_en
     # Pre-compute each section's body so we can build an accurate TOC.
     section_specs = [
-        ("project-areas", "Project Areas", _project_areas(data)),
-        ("interaction", "Interaction Style", _interaction(data)),
-        ("codex-dimensions", "Codex-Native Dimensions", _codex_native_dimensions(data)),
-        ("what-works", "Impressive Things You Did", _what_works(data)),
-        ("friction", "Where Things Go Wrong", _friction(data)),
-        ("suggestions", "Suggestions", _suggestions(data)),
-        ("on-the-horizon", "On the Horizon", _horizon(data)),
-        ("charts", "Charts", _charts(data)),
+        ("priority-ladder", section_titles["priority-ladder"], _priority_ladder(data)),
+        ("scorecard", section_titles["scorecard"], _scorecard(data)),
+        ("project-areas", section_titles["project-areas"], _project_areas(data)),
+        ("interaction", section_titles["interaction"], _interaction(data)),
+        ("codex-dimensions", section_titles["codex-dimensions"], _codex_native_dimensions(data)),
+        ("what-works", section_titles["what-works"], _what_works(data)),
+        ("friction", section_titles["friction"], _friction(data)),
+        ("suggestions", section_titles["suggestions"], _suggestions(data)),
+        ("on-the-horizon", section_titles["on-the-horizon"], _horizon(data)),
+        ("success-metrics", section_titles["success-metrics"], _success_metrics(data)),
+        ("charts", section_titles["charts"], _charts(data)),
     ]
     present = [(a, t) for a, t, b in section_specs if b and b.strip()]
 
@@ -548,9 +763,10 @@ def render(data_path: str, out_path: str) -> int:
     body.append(f"<h1>{_esc(title)}</h1>")
     if subtitle:
         body.append(f'<div class="subtitle">{subtitle}</div>')
-    body.append(_share_warning())
+    body.append(_share_warning(data))
     body.append(_toc(present))
     body.append(_stats_row(data))
+    body.append(_executive_summary(data))
     body.append(_glance(data))
     for anchor, title_, body_ in section_specs:
         body.append(_section(anchor, title_, body_))
