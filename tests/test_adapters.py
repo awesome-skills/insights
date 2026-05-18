@@ -68,6 +68,37 @@ class TestClaudeCode:
         assert parsed.metadata.user_message_count == 1
         assert parsed.metadata.first_prompt == "分析最近一周"
 
+    def test_injection_inside_command_args_still_filtered(self, tmp_path):
+        # Defense-in-depth: the slash-command wrapper extracted from
+        # <command-args> must itself pass the injection filter; otherwise a
+        # buggy/hostile slash body could embed <environment_context> etc. and
+        # bypass first_prompt sanitisation.
+        f = tmp_path / "-Users-x-proj" / "ses.jsonl"
+        _write_jsonl(f, [
+            {"type": "user", "timestamp": "2026-05-01T10:00:00Z",
+             "message": {"role": "user",
+                         "content": "<command-message>m</command-message>"
+                                    "<command-name>/x</command-name>"
+                                    "<command-args><environment_context>cwd=/x</environment_context></command-args>"}},
+        ])
+        parsed = claude_code.parse_session(str(f))
+        assert parsed.metadata.user_message_count == 0
+        assert parsed.metadata.first_prompt == ""
+
+    def test_injection_inside_command_args_list_content_filtered(self, tmp_path):
+        # Same defense-in-depth for the list-shaped content path.
+        f = tmp_path / "-Users-x-proj" / "ses.jsonl"
+        _write_jsonl(f, [
+            {"type": "user", "timestamp": "2026-05-01T10:00:00Z",
+             "message": {"role": "user",
+                         "content": [{"type": "text",
+                                      "text": "<command-message>m</command-message>"
+                                              "<command-name>/x</command-name>"
+                                              "<command-args><system-reminder>x</system-reminder></command-args>"}]}},
+        ])
+        parsed = claude_code.parse_session(str(f))
+        assert parsed.metadata.user_message_count == 0
+
     def test_system_reminder_filtered(self, tmp_path):
         f = tmp_path / "-Users-x-proj" / "ses.jsonl"
         _write_jsonl(f, [
@@ -374,6 +405,37 @@ class TestCodex:
         ])
         parsed = codex.parse_session(str(f))
         assert parsed.metadata.tool_errors == 0
+
+    def test_mid_line_error_keyword_is_not_false_positive(self, tmp_path):
+        # Compiler / test-runner output that mentions "error: " mid-sentence
+        # used to mis-classify the whole tool result as a failure, polluting
+        # the friction histogram. Only line-start markers should count.
+        f = tmp_path / "2026" / "05" / "02" / "rollout-x.jsonl"
+        self._session(f, source="cli", extra_events=[
+            {"timestamp": "2026-05-02T10:00:01Z", "type": "response_item",
+             "payload": {"type": "function_call", "name": "exec_command", "call_id": "call_exec",
+                         "arguments": json.dumps({"cmd": "npm test"})}},
+            {"timestamp": "2026-05-02T10:00:02Z", "type": "response_item",
+             "payload": {"type": "function_call_output", "call_id": "call_exec",
+                         "output": "PASSED 12/12\nNote: error: file deleted (expected)\n"}},
+        ])
+        parsed = codex.parse_session(str(f))
+        assert parsed.metadata.tool_errors == 0
+
+    def test_line_start_error_marker_still_caught(self, tmp_path):
+        # The fix only narrows; a genuine line-leading "error: " (e.g. rustc)
+        # must still be detected.
+        f = tmp_path / "2026" / "05" / "03" / "rollout-x.jsonl"
+        self._session(f, source="cli", extra_events=[
+            {"timestamp": "2026-05-03T10:00:01Z", "type": "response_item",
+             "payload": {"type": "function_call", "name": "exec_command", "call_id": "call_exec",
+                         "arguments": json.dumps({"cmd": "cargo build"})}},
+            {"timestamp": "2026-05-03T10:00:02Z", "type": "response_item",
+             "payload": {"type": "function_call_output", "call_id": "call_exec",
+                         "output": "error: unused variable `foo`\n  --> src/main.rs:5"}},
+        ])
+        parsed = codex.parse_session(str(f))
+        assert parsed.metadata.tool_errors == 1
 
     def test_reasoning_item_does_not_pollute_assistant_text(self, tmp_path):
         f = tmp_path / "2026" / "05" / "01" / "rollout-x.jsonl"

@@ -183,8 +183,12 @@ def _looks_error(output: str, status: str = "") -> bool:
             return int(code_text) != 0
         except (ValueError, IndexError):
             return True
+    # Anchor each marker to a line *start* (after stripping leading whitespace) so
+    # successful build output that happens to mention "error: " or "fatal: " mid-
+    # sentence — "1 error: unused", "Note: fatal: was expected" — doesn't get
+    # mis-classified as a tool failure and pollute the friction histogram.
     head_l = head.lower()
-    explicit_failure_markers = (
+    explicit_failure_line_starts = (
         "traceback (most recent call last)",
         "command failed",
         "failed with exit code",
@@ -192,7 +196,11 @@ def _looks_error(output: str, status: str = "") -> bool:
         "fatal: ",
         "exception:",
     )
-    return any(marker in head_l for marker in explicit_failure_markers)
+    for line in head_l.splitlines():
+        stripped = line.lstrip()
+        if any(stripped.startswith(marker) for marker in explicit_failure_line_starts):
+            return True
+    return False
 
 
 def _handle_turn_context(payload: dict, meta: SessionMetadata) -> None:

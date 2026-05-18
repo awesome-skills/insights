@@ -9,6 +9,33 @@ from pathlib import Path
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 
 
+def test_gemini_install_renders_toml_without_claude_path(tmp_path):
+    """Regression: gemini-command.toml used to hardcode ~/.claude/skills/insights
+    paths and install.sh symlinked it verbatim. Installing from any other
+    SKILL_ROOT then left Gemini /insights pointing at a non-existent path."""
+    home = tmp_path / "home"
+    (home / ".gemini").mkdir(parents=True)
+    env = os.environ.copy()
+    env["HOME"] = str(home)
+
+    subprocess.run(
+        ["bash", str(SKILL_ROOT / "install" / "install.sh")],
+        cwd=SKILL_ROOT,
+        env=env,
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+    command = home / ".gemini" / "commands" / "insights.toml"
+    assert command.exists()
+    assert not command.is_symlink()
+    text = command.read_text(encoding="utf-8")
+    assert "~/.claude/skills/insights" not in text
+    assert "__INSIGHTS_DIR__" not in text
+    assert str(SKILL_ROOT) in text
+
+
 def test_opencode_install_renders_command_without_claude_path(tmp_path):
     home = tmp_path / "home"
     xdg = tmp_path / "xdg"

@@ -112,7 +112,7 @@ PY
 }
 
 is_rendered_agent() {
-  [[ "$1" == "OpenCode" || "$1" == "Codex" ]]
+  [[ "$1" == "OpenCode" || "$1" == "Codex" || "$1" == "Gemini CLI" ]]
 }
 
 has_symlink_ancestor() {

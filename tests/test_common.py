@@ -174,10 +174,15 @@ class TestSafeSessionId:
         assert "/" not in sid
 
     def test_pure_dots_falls_back(self):
-        assert common.safe_session_id("..") == "unknown"
-        assert common.safe_session_id(".") == "unknown"
-        assert common.safe_session_id("") == "unknown"
-        assert common.safe_session_id(None) == "unknown"
+        # None has no identity to preserve → collapses to the bare fallback.
+        assert common.safe_session_id(None) == "unknown"  # type: ignore[arg-type]
+        # "" / "." / ".." each carry distinct identity and must not collide,
+        # so they get a digest suffix rather than the literal "unknown".
+        for raw in ("", ".", ".."):
+            sid = common.safe_session_id(raw)
+            assert sid.startswith("unknown-"), sid
+            assert ".." not in sid
+            assert "/" not in sid
 
     def test_excessive_length_capped(self):
         sid = common.safe_session_id("a" * 1000)
@@ -203,3 +208,57 @@ class TestSafeSessionId:
     def test_cleaned_empty_ids_do_not_collide_with_fallback(self):
         assert common.safe_session_id("///") != common.safe_session_id("unknown")
         assert common.safe_session_id("///") != common.safe_session_id("\\\\\\")
+
+    def test_special_dot_inputs_do_not_collide(self):
+        # "" / "." / ".." used to all return the literal "unknown" sans digest,
+        # causing two malformed upstream sessions to overwrite each other's
+        # metadata cache file. Each must now resolve to a distinct id.
+        empty = common.safe_session_id("")
+        dot = common.safe_session_id(".")
+        dotdot = common.safe_session_id("..")
+        assert empty != dot
+        assert dot != dotdot
+        assert empty != dotdot
+        # None still collapses to bare fallback (no identity to preserve).
+        assert common.safe_session_id(None) == "unknown"  # type: ignore[arg-type]
+        # And distinct from any of the digest-suffixed variants.
+        assert common.safe_session_id(None) != empty  # type: ignore[arg-type]
+
+
+# ------------- parse_iso -------------
+
+class TestParseIso:
+    def test_none_returns_none(self):
+        assert common.parse_iso(None) is None
+
+    def test_bool_rejected(self):
+        # bool is a subclass of int; True must not parse to a 1970 timestamp.
+        assert common.parse_iso(True) is None
+        assert common.parse_iso(False) is None
+
+    def test_nan_inf_rejected(self):
+        assert common.parse_iso(float("nan")) is None
+        assert common.parse_iso(float("inf")) is None
+        assert common.parse_iso(float("-inf")) is None
+
+    def test_iso_string_parses(self):
+        dt = common.parse_iso("2024-01-15T12:34:56Z")
+        assert dt is not None
+        assert dt.year == 2024 and dt.month == 1 and dt.day == 15
+
+    def test_invalid_string_returns_none(self):
+        assert common.parse_iso("not-a-date") is None
+
+    def test_epoch_seconds(self):
+        dt = common.parse_iso(1_700_000_000)  # 2023-11-14
+        assert dt is not None
+        assert dt.year == 2023
+
+    def test_epoch_millis(self):
+        dt = common.parse_iso(1_700_000_000_000)
+        assert dt is not None
+        assert dt.year == 2023
+
+    def test_overflow_returns_none(self):
+        # Extremely large values that pass the > 1e12 ms branch but still overflow.
+        assert common.parse_iso(1e30) is None

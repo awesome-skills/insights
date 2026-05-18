@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import render  # type: ignore
+from render import _short_tokens
 
 
 @pytest.fixture
@@ -200,6 +201,37 @@ def test_html_contains_privacy_share_warning(write_and_render):
     html = write_and_render({"header": {"agent": "test", "title": "Report"}})
     assert "Review before sharing" in html
     assert "may include prompts, file paths, or tool output" in html
+
+
+def test_stats_row_renders_schema_hours_field(write_and_render):
+    html = write_and_render({"header": {"agent": "test", "title": "Report", "hours": 12.5}})
+    assert "12.5" in html
+    assert "Hours" in html
+
+
+@pytest.mark.parametrize("n,expected", [
+    (0, ""),
+    (None, ""),
+    (500, "500"),
+    (999, "999"),
+    (1000, "1k"),
+    (1500, "1.5k"),
+    (9499, "9.5k"),
+    (9999, "10k"),
+    (10000, "10k"),
+    (15499, "15k"),
+    # k/M boundary: promote only when round(n/1000) reaches 1000, so the label
+    # never goes backwards across the threshold (949_999 and 950_000 both 950k).
+    (949_999, "950k"),
+    (950_000, "950k"),
+    (999_499, "999k"),
+    (999_999, "1.0M"),
+    (1_000_000, "1.0M"),
+    (1_500_000, "1.5M"),
+    ("badvalue", "badvalue"),
+])
+def test_short_tokens_granularity(n, expected):
+    assert _short_tokens(n) == expected
 
 
 def test_scalar_schema_drift_does_not_crash_renderer(write_and_render):

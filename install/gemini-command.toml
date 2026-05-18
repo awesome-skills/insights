@@ -4,7 +4,7 @@ description = "Analyze local agent session history (Claude Code/Codex/Gemini/Ope
 
 prompt = """
 You are running the cross-agent `insights` skill. The full workflow lives at
-~/.claude/skills/insights/SKILL.md; this prompt inlines the essentials so you
+__INSIGHTS_DIR__/SKILL.md; this prompt inlines the essentials so you
 don't have to read it unless you want extra context.
 
 User extra args: {{args}}
@@ -12,22 +12,22 @@ User extra args: {{args}}
 ## 5-step workflow
 
 1. Detect host agent (auto-detection is best-effort; fall back to whatever the user used):
-   `python3 ~/.claude/skills/insights/scripts/insights.py detect`
+   `python3 __INSIGHTS_DIR__/scripts/insights.py detect`
 
 2. Quantitative metadata (default 60 days, ≤80 sessions, skip warmups):
-   `python3 ~/.claude/skills/insights/scripts/insights.py metadata --agent <agent> --days 60 --limit 80 --min-messages 2 --workdir ~/.insights-workspace/<agent>`
+   `python3 __INSIGHTS_DIR__/scripts/insights.py metadata --agent <agent> --days 60 --limit 80 --min-messages 2 --workdir ~/.insights-workspace/<agent>`
 
 3. Per-session facet extraction. For each metadata file, read its transcript and
    emit a facet JSON to `<workdir>/facets/<session_id>.json` per the schema in
-   `~/.claude/skills/insights/references/facet_schema.md`. Required fields include
+   `__INSIGHTS_DIR__/references/facet_schema.md`. Required fields include
    `evidence_quote` — pick a real line from the transcript so I know you read it.
 
-   `python3 ~/.claude/skills/insights/scripts/insights.py transcript --agent <agent> --session <id> --max-chars 18000`
+   `python3 __INSIGHTS_DIR__/scripts/insights.py transcript --agent <agent> --session <id> --max-chars 18000`
 
-4. Aggregate to a `report.json` per `~/.claude/skills/insights/references/report_schema.md`.
+4. Aggregate to a `report.json` per `__INSIGHTS_DIR__/references/report_schema.md`.
 
 5. Render HTML:
-   `python3 ~/.claude/skills/insights/scripts/insights.py render --data <workdir>/report.json --out <workdir>/report.html`
+   `python3 __INSIGHTS_DIR__/scripts/insights.py render --data <workdir>/report.json --out <workdir>/report.html`
 
 ## Quality bar — do NOT skip these
 

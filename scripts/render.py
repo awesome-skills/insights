@@ -613,13 +613,27 @@ def _short_tokens(v) -> str:
         return ""
     try:
         n = int(v)
-        if n >= 1_000_000:
-            return f"{n / 1_000_000:.1f}M"
-        if n >= 1_000:
-            return f"{n / 1000:.0f}k"
-        return str(n)
     except Exception:
         return str(v)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 10_000:
+        # Round to thousands first; only promote to "M" if that rounded value
+        # would spill into a 4-digit k label (e.g. 999_999 → 1000k). This keeps
+        # the k→M transition monotonic — 949_999 and 950_000 both render as
+        # "950k", and the jump to "1.0M" only fires once round() reaches 1000.
+        thousands = round(n / 1000)
+        if thousands >= 1000:
+            return f"{n / 1_000_000:.1f}M"
+        return f"{thousands}k"
+    if n >= 1_000:
+        # 1k–10k: keep one decimal so 1500 reads as "1.5k" rather than "2k",
+        # but trim a trailing ".0" so 1000 still reads as "1k".
+        formatted = f"{n / 1000:.1f}"
+        if formatted.endswith(".0"):
+            formatted = formatted[:-2]
+        return f"{formatted}k"
+    return str(n)
 
 
 def _toc(present_anchors: list[tuple[str, str]]) -> str:

@@ -179,15 +179,18 @@ def safe_session_id(raw: str, fallback: str = "unknown") -> str:
     Strip anything that isn't `[A-Za-z0-9._-]`, cap length, and refuse `..`
     or `.` as the whole result.
     """
-    if not raw:
+    # None has no useful identity to distinguish, so collapse to the bare fallback.
+    # "" / "." / ".." DO carry distinct identities and must not collide with each
+    # other or with a literal `fallback` upstream session id — append a digest.
+    if raw is None:
         return fallback
     raw_s = str(raw)
+    digest = hashlib.sha256(raw_s.encode("utf-8", errors="replace")).hexdigest()[:8]
+    if not raw_s or raw_s in (".", ".."):
+        return f"{fallback}-{digest}"
     cleaned_full = _SAFE_ID_CHARS.sub("_", raw_s)
     cleaned = cleaned_full[:_MAX_SAFE_ID_LEN]
     cleaned = cleaned.strip("._-")
-    if raw_s in (".", ".."):
-        return fallback
-    digest = hashlib.sha256(raw_s.encode("utf-8", errors="replace")).hexdigest()[:8]
     if not cleaned or cleaned in (".", ".."):
         return f"{fallback}-{digest}"
     if cleaned == raw_s and len(raw_s) <= _MAX_SAFE_ID_LEN:
@@ -209,11 +212,18 @@ def truncate(s: str, n: int = 200) -> str:
 def parse_iso(ts: str | int | float | None) -> datetime | None:
     if ts is None:
         return None
+    # bool is a subclass of int; reject explicitly so True/False don't become 1970 timestamps.
+    if isinstance(ts, bool):
+        return None
     if isinstance(ts, (int, float)):
-        # epoch ms or seconds?
-        if ts > 1e12:
-            ts = ts / 1000
-        return datetime.fromtimestamp(ts, tz=timezone.utc)
+        # NaN/Inf would otherwise overflow inside fromtimestamp.
+        if isinstance(ts, float) and (ts != ts or ts in (float("inf"), float("-inf"))):
+            return None
+        try:
+            seconds = ts / 1000 if ts > 1e12 else ts
+            return datetime.fromtimestamp(seconds, tz=timezone.utc)
+        except (OverflowError, ValueError, OSError):
+            return None
     if isinstance(ts, str):
         try:
             s = ts.replace("Z", "+00:00")

@@ -149,9 +149,13 @@ def _handle_user(ev: dict, ts: str, meta: SessionMetadata, messages: list[Normal
     msg = ev.get("message", {})
     content = msg.get("content")
     if isinstance(content, str):
-        # Recover any user input wrapped inside <command-args> before filtering.
+        # Recover any user input wrapped inside <command-args> before filtering,
+        # then re-run the injection filter on the recovered text. A hostile or
+        # buggy slash-command body could carry harness tags inside the args.
         recovered = _extract_real_user_text(content)
         if recovered:
+            if is_system_injection("user", recovered):
+                return
             nm = NormalizedMessage(role="user", timestamp=ts, text=recovered)
             aggregate_message(meta, nm)
             messages.append(nm)
@@ -171,6 +175,8 @@ def _handle_user(ev: dict, ts: str, meta: SessionMetadata, messages: list[Normal
                 text = c.get("text", "")
                 recovered = _extract_real_user_text(text)
                 if recovered:
+                    if is_system_injection("user", recovered):
+                        continue
                     nm = NormalizedMessage(role="user", timestamp=ts, text=recovered)
                     aggregate_message(meta, nm)
                     messages.append(nm)
