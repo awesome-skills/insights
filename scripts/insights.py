@@ -180,12 +180,19 @@ def cmd_metadata(args: argparse.Namespace) -> int:
     meta_dir.mkdir(parents=True, exist_ok=True)
     root_kw = _root_kw(agent, args.root)
 
+    # Codex's subagent filter does a `_is_subagent_rollout` per JSONL (opens
+    # + readlines every file). Skip it in discovery and re-check lazily on
+    # cache miss below, so steady-state runs avoid N file opens.
+    list_kwargs = dict(root_kw)
+    if agent == "codex":
+        list_kwargs["skip_subagent_check"] = True
+
     if args.session:
-        sessions = [s for s in adapter.list_sessions(**root_kw) if s["session_id"] == args.session]
+        sessions = [s for s in adapter.list_sessions(**list_kwargs) if s["session_id"] == args.session]
         if not sessions:
             raise SystemExit(f"session not found: {args.session}")
     else:
-        sessions = adapter.list_sessions(since=_since(args.days), **root_kw)
+        sessions = adapter.list_sessions(since=_since(args.days), **list_kwargs)
         sessions = _apply_limit(sessions, args.limit)
 
     written = []
@@ -223,6 +230,12 @@ def cmd_metadata(args: argparse.Namespace) -> int:
                     written.append(str(outp))
                     continue
 
+        # Cache-miss path: re-validate that this isn't a Codex subagent rollout
+        # before parsing. (`list_sessions(skip_subagent_check=True)` returned
+        # everything; the cache layer above implicitly filtered prior runs.)
+        if agent == "codex" and adapter._is_subagent_rollout(Path(ref["path"])):
+            continue
+
         try:
             parsed = _parse_one(adapter, agent, ref, metadata_only=True)
             if args.min_messages and parsed.metadata.user_message_count < args.min_messages:
@@ -257,7 +270,9 @@ def cmd_transcript(args: argparse.Namespace) -> int:
     if not sessions:
         raise SystemExit(f"session not found: {args.session}")
     parsed = _parse_one(adapter, agent, sessions[0])
-    md_lines = _render_transcript_markdown(parsed, max_chars=args.max_chars, mode=args.mode)
+    md_lines = _render_transcript_markdown(
+        parsed, max_chars=args.max_chars, mode=args.mode, head_ratio=args.head_ratio,
+    )
     text = "\n".join(md_lines)
     if args.out:
         Path(args.out).expanduser().write_text(text, encoding="utf-8")
@@ -295,7 +310,8 @@ def _msg_block(msg) -> str | None:
     return None
 
 
-def _render_transcript_markdown(parsed, max_chars: int = 20000, mode: str = "head_tail") -> list[str]:
+def _render_transcript_markdown(parsed, max_chars: int = 20000, mode: str = "head_tail",
+                                head_ratio: float = 0.3) -> list[str]:
     """Render a session transcript.
 
     `mode`:
@@ -304,6 +320,7 @@ def _render_transcript_markdown(parsed, max_chars: int = 20000, mode: str = "hea
         few messages reveal outcome".
       - `head`: legacy linear-from-start truncation.
       - `tail`: keep only the last `max_chars` worth of turns.
+    `head_ratio` only applies to `head_tail` mode.
     """
     m = parsed.metadata
     out = [
@@ -331,11 +348,17 @@ def _render_transcript_markdown(parsed, max_chars: int = 20000, mode: str = "hea
     if not blocks:
         return out
 
+    # Charge the banner/header against the budget so the final
+    # `"\n".join(out + blocks)` actually fits within max_chars. The +1 accounts
+    # for the newline that joins the header to the first block.
+    header_len = len("\n".join(out)) + 1
+    body_budget = max(0, max_chars - header_len)
+
     if mode == "head":
-        return out + _truncate_head(blocks, max_chars)
+        return out + _truncate_head(blocks, body_budget)
     if mode == "tail":
-        return out + _truncate_tail(blocks, max_chars)
-    return out + _truncate_head_tail(blocks, max_chars)
+        return out + _truncate_tail(blocks, body_budget)
+    return out + _truncate_head_tail(blocks, body_budget, head_ratio=head_ratio)
 
 
 def _truncate_head(blocks: list[str], budget: int) -> list[str]:
@@ -407,6 +430,17 @@ def cmd_render(args: argparse.Namespace) -> int:
     return render.render(args.data, args.out)
 
 
+def _head_ratio(value: str) -> float:
+    """argparse type for --head-ratio: float strictly in (0, 1)."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"--head-ratio must be a number, got {value!r}")
+    if not (0 < v < 1):
+        raise argparse.ArgumentTypeError(f"--head-ratio must be in (0, 1), got {v}")
+    return v
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="insights")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -442,6 +476,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-chars", type=int, default=20000)
     sp.add_argument("--mode", choices=("head_tail", "head", "tail"), default="head_tail",
                     help="head_tail (default): keep opening + ending; head: linear from start; tail: only last turns")
+    sp.add_argument("--head-ratio", dest="head_ratio", type=_head_ratio, default=0.3,
+                    help="head_tail mode: fraction of budget kept for opening turns (default 0.3, range (0,1))")
     sp.add_argument("--root", default=None,
                     help="Override the agent's default session storage root")
     sp.add_argument("--out", default=None)

@@ -54,7 +54,18 @@ def _is_subagent_rollout(jsonl: Path) -> bool:
     return False
 
 
-def list_sessions(since: datetime | None = None, root: Path = DEFAULT_ROOT) -> list[dict]:
+def list_sessions(since: datetime | None = None, root: Path = DEFAULT_ROOT,
+                  skip_subagent_check: bool = False) -> list[dict]:
+    """Enumerate Codex rollout files under `root`.
+
+    `skip_subagent_check=True` skips the per-file `_is_subagent_rollout` IO
+    (open + readline + json.loads of every JSONL). Callers that maintain a
+    downstream cache by session_id can opt in: subagent rollouts will appear
+    in the returned list but won't be re-validated. The caller is then
+    responsible for filtering them (e.g. only on cache miss). For
+    one-shot callers (`discover`, `transcript`) leave the default — they need
+    the canonical filtered set.
+    """
     if not root.exists():
         return []
     out: list[dict] = []
@@ -65,7 +76,7 @@ def list_sessions(since: datetime | None = None, root: Path = DEFAULT_ROOT) -> l
             continue
         if since and mtime < since:
             continue
-        if _is_subagent_rollout(jsonl):
+        if not skip_subagent_check and _is_subagent_rollout(jsonl):
             continue
         sid = jsonl.stem  # rollout-<ts>-<uuid>
         parts = sid.split("-")

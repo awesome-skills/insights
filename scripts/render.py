@@ -126,6 +126,9 @@ h2 { font-size: 20px; font-weight: 600; color: #0f172a; margin-top: 44px; margin
 .bar-fill.c3 { background: #f59e0b; } /* amber */
 .bar-fill.c4 { background: #8b5cf6; } /* violet */
 .bar-fill.c5 { background: #0891b2; } /* cyan */
+.bar-fill.c6 { background: #f43f5e; } /* rose */
+.bar-fill.c7 { background: #65a30d; } /* lime */
+.bar-fill.c8 { background: #0284c7; } /* sky */
 .bar-value { width: 36px; font-size: 11px; font-weight: 500; color: #64748b; text-align: right; }
 .fun-ending { background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 100%);
               border: 1px solid #f9a8d4; border-radius: 12px; padding: 16px 20px; margin-top: 28px; }
@@ -135,9 +138,14 @@ h2 { font-size: 20px; font-weight: 600; color: #0f172a; margin-top: 44px; margin
 @media print {
   body { background: white; padding: 0; }
   .nav-toc { display: none; }
+  /* Preserve coloured backgrounds so that friction / win / exec-summary cards
+     remain semantically distinguishable in printed / saved-as-PDF reports.
+     Without this the browser strips backgrounds and the report flattens to a
+     monochrome text wall. */
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .at-a-glance, .project-area, .narrative, .big-win, .friction-category,
   .feature-card, .pattern-card, .horizon-card, .claude-md-section, .chart-card,
-  .fun-ending { page-break-inside: avoid; }
+  .exec-summary, .fun-ending { page-break-inside: avoid; }
 }
 """
 
@@ -160,7 +168,7 @@ def _text(v) -> str:
     return "" if v is None else str(v)
 
 
-_BAR_COLOR_CYCLE = ("c1", "c2", "c3", "c4", "c5")
+_BAR_COLOR_CYCLE = ("c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8")
 
 
 def _bar_chart(title: str, counts: dict[str, int], top_n: int = 8, color_class: str | None = None) -> str:
@@ -255,7 +263,7 @@ def _executive_summary(report: dict) -> str:
     if not (ex.get("headline") or ex.get("one_sentence") or changes):
         return ""
     return (
-        '<div class="exec-summary">'
+        '<div class="exec-summary" id="exec-summary">'
         f'<div class="exec-kicker">{_esc("执行摘要" if zh else "Executive Summary")}</div>'
         f'<div class="exec-headline">{_esc(ex.get("headline", ""))}</div>'
         f'<div class="exec-one">{_esc(ex.get("one_sentence", ""))}</div>'
@@ -731,6 +739,7 @@ def render(data_path: str, out_path: str) -> int:
     agent = str(header.get("agent") or "")
     dimension_title_en = "OpenCode Execution Dimensions" if agent == "opencode" else "Execution Dimensions"
     section_titles = {
+        "exec-summary": "执行摘要",
         "priority-ladder": "优先级阶梯",
         "scorecard": "当前能力评分",
         "project-areas": "项目领域",
@@ -743,6 +752,7 @@ def render(data_path: str, out_path: str) -> int:
         "success-metrics": "7 天验收指标",
         "charts": "统计图表",
     } if zh else {
+        "exec-summary": "Executive Summary",
         "priority-ladder": "Priority Ladder",
         "scorecard": "Scorecard",
         "project-areas": "Project Areas",
@@ -771,7 +781,11 @@ def render(data_path: str, out_path: str) -> int:
         ("success-metrics", section_titles["success-metrics"], _success_metrics(data)),
         ("charts", section_titles["charts"], _charts(data)),
     ]
-    present = [(a, t) for a, t, b in section_specs if b and b.strip()]
+    exec_summary_html = _executive_summary(data)
+    present = []
+    if exec_summary_html:
+        present.append(("exec-summary", section_titles["exec-summary"]))
+    present.extend((a, t) for a, t, b in section_specs if b and b.strip())
 
     body = []
     body.append(f"<h1>{_esc(title)}</h1>")
@@ -780,7 +794,7 @@ def render(data_path: str, out_path: str) -> int:
     body.append(_share_warning(data))
     body.append(_toc(present))
     body.append(_stats_row(data))
-    body.append(_executive_summary(data))
+    body.append(exec_summary_html)
     body.append(_glance(data))
     for anchor, title_, body_ in section_specs:
         body.append(_section(anchor, title_, body_))

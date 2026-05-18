@@ -6,8 +6,33 @@ import json
 import os
 from types import SimpleNamespace
 
+import pytest
+
 import insights
 from common import ParsedSession, SessionMetadata
+
+
+def test_head_ratio_cli_accepts_valid_float():
+    parser = insights.build_parser()
+    args = parser.parse_args(["transcript", "--session", "ses_1", "--head-ratio", "0.6"])
+    assert args.head_ratio == pytest.approx(0.6)
+    assert args.mode == "head_tail"  # default unchanged
+    assert args.max_chars == 20000
+
+
+def test_head_ratio_cli_default_is_three_tenths():
+    parser = insights.build_parser()
+    args = parser.parse_args(["transcript", "--session", "ses_1"])
+    assert args.head_ratio == pytest.approx(0.3)
+
+
+@pytest.mark.parametrize("bad_value", ["0", "1", "1.5", "-0.1", "abc"])
+def test_head_ratio_cli_rejects_out_of_range_or_garbage(bad_value, capsys):
+    parser = insights.build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["transcript", "--session", "ses_1", "--head-ratio", bad_value])
+    err = capsys.readouterr().err
+    assert "--head-ratio" in err
 
 
 def test_metadata_cache_without_version_is_reparsed(tmp_path, monkeypatch):

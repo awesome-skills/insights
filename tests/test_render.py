@@ -148,6 +148,44 @@ def test_bar_chart_cycles_colors(write_and_render):
     assert len(classes) >= 2
 
 
+def test_bar_chart_color_cycle_covers_top_n(write_and_render):
+    # The cycle must have at least as many entries as the default top_n (=8),
+    # otherwise the top of a busy chart shows two bars with the same colour
+    # and the colour stops being a category cue.
+    html = write_and_render({
+        "header": {"agent": "test"},
+        "stats": {"tool_counts": {f"tool_{i}": 10 - i for i in range(8)}},
+    })
+    classes = re.findall(r'bar-fill (c\d)', html)
+    assert len(set(classes)) >= 8, classes
+
+
+def test_print_color_adjust_in_css(write_and_render):
+    html = write_and_render({"header": {"agent": "test", "title": "x"}})
+    # Coloured cards must survive print / PDF export.
+    assert "print-color-adjust" in html
+    assert "-webkit-print-color-adjust" in html
+
+
+def test_executive_summary_listed_in_toc(write_and_render):
+    html = write_and_render({
+        "header": {"agent": "test", "title": "x"},
+        "executive_summary": {
+            "headline": "Worked great",
+            "one_sentence": "Shipped 3 things this week.",
+        },
+    })
+    assert 'id="exec-summary"' in html
+    assert 'href="#exec-summary"' in html
+
+
+def test_executive_summary_anchor_absent_when_no_data(write_and_render):
+    html = write_and_render({"header": {"agent": "test", "title": "x"}})
+    # No exec-summary content → no anchor and no TOC entry for it.
+    assert 'id="exec-summary"' not in html
+    assert 'href="#exec-summary"' not in html
+
+
 def test_html_lang_chinese_detected(write_and_render):
     data = {
         "header": {"title": "中文报告"},

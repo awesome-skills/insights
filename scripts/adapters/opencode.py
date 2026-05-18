@@ -193,10 +193,13 @@ def parse_session(path_or_db: str, session_id: str = "", metadata_only: bool = F
                         meta.files_touched.append(fp)
                     status = str(state.get("status", "") or "")
                     is_err = status.lower() in _FAILED_TOOL_STATUSES
+                    # A single OpenCode tool `input` can carry a multi-KB patch
+                    # body. Cap it so full-transcript loads don't balloon RSS
+                    # for sessions full of large apply_patch / Edit calls.
                     nm = NormalizedMessage(
                         role="tool_use",
                         timestamp=ts,
-                        text=cmd,
+                        text=truncate(cmd, 600),
                         tool_name=name,
                         tokens_in=tin if not counted else 0,
                         tokens_out=tout if not counted else 0,
