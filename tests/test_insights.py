@@ -48,7 +48,7 @@ def test_metadata_cache_without_version_is_reparsed(tmp_path, monkeypatch):
             }]
 
         @staticmethod
-        def parse_session(_path, metadata_only=False):
+        def parse_one(_ref, metadata_only=False):
             calls["parse"] += 1
             assert metadata_only is True
             return ParsedSession(

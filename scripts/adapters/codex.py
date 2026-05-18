@@ -28,6 +28,27 @@ from common import (  # type: ignore[import-not-found]
 
 DEFAULT_ROOT = Path.home() / ".codex" / "sessions"
 
+# Orchestrator-facing capabilities (see claude_code.py for the contract).
+# `skip_subagent_check=True` lets cmd_metadata defer the per-JSONL first-line
+# read; we re-validate on cache miss via `is_subagent_session` below.
+ROOT_KWARG = "root"
+LIST_KWARGS: dict = {"skip_subagent_check": True}
+
+
+def is_subagent_session(ref: dict) -> bool:
+    """Return True if `ref` refers to a Codex subagent rollout. Called on
+    cache miss in cmd_metadata to filter out the rollouts that
+    `list_sessions(skip_subagent_check=True)` left in the result set."""
+    path = ref.get("path")
+    if not path:
+        return False
+    return _is_subagent_rollout(Path(path))
+
+
+def parse_one(ref: dict, metadata_only: bool = False):
+    """Uniform per-adapter parse entry; see claude_code.parse_one."""
+    return parse_session(ref["path"], metadata_only=metadata_only)
+
 
 def _is_subagent_rollout(jsonl: Path) -> bool:
     """Codex stores sub-agent threads as their own rollout files. The first line

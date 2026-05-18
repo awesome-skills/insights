@@ -28,6 +28,25 @@ from common import (  # type: ignore[import-not-found]
 
 
 DEFAULT_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+
+# Orchestrator-facing capabilities (see claude_code.py for the contract).
+# OpenCode's single-SQLite layout means cmd_metadata passes a `db=` kwarg,
+# unlike the other adapters that take `root=`.
+ROOT_KWARG = "db"
+LIST_KWARGS: dict = {}
+
+
+def is_subagent_session(ref: dict) -> bool:
+    """OpenCode doesn't expose subagents as separate top-level sessions."""
+    return False
+
+
+def parse_one(ref: dict, metadata_only: bool = False):
+    """Uniform per-adapter parse entry. OpenCode needs `session_id` to look up
+    the row in the shared SQLite db; other adapters infer it from the path."""
+    return parse_session(ref["path"], session_id=ref["session_id"], metadata_only=metadata_only)
+
+
 _FAILED_TOOL_STATUSES = {"error", "failed", "failure", "cancelled", "canceled", "timeout", "timed_out"}
 _METADATA_ONLY_JSON_REMOVE_PATHS = (
     "$.content",

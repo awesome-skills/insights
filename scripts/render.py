@@ -204,7 +204,7 @@ def _glance(report: dict) -> str:
     if not parts:
         return ""
     return (
-        f'<div class="at-a-glance"><div class="glance-title">{_esc("快速概览" if zh else "At a Glance")}</div>'
+        f'<div class="at-a-glance" id="at-a-glance"><div class="glance-title">{_esc("快速概览" if zh else "At a Glance")}</div>'
         + "".join(parts)
         + "</div>"
     )
@@ -605,6 +605,7 @@ def render(data_path: str, out_path: str) -> int:
     dimension_title_en = "OpenCode Execution Dimensions" if agent == "opencode" else "Execution Dimensions"
     section_titles = {
         "exec-summary": "执行摘要",
+        "at-a-glance": "快速概览",
         "priority-ladder": "优先级阶梯",
         "scorecard": "当前能力评分",
         "project-areas": "项目领域",
@@ -618,6 +619,7 @@ def render(data_path: str, out_path: str) -> int:
         "charts": "统计图表",
     } if zh else {
         "exec-summary": "Executive Summary",
+        "at-a-glance": "At a Glance",
         "priority-ladder": "Priority Ladder",
         "scorecard": "Scorecard",
         "project-areas": "Project Areas",
@@ -647,9 +649,12 @@ def render(data_path: str, out_path: str) -> int:
         ("charts", section_titles["charts"], _charts(data)),
     ]
     exec_summary_html = _executive_summary(data)
+    glance_html = _glance(data)
     present = []
     if exec_summary_html:
         present.append(("exec-summary", section_titles["exec-summary"]))
+    if glance_html:
+        present.append(("at-a-glance", section_titles["at-a-glance"]))
     present.extend((a, t) for a, t, b in section_specs if b and b.strip())
 
     body = []
@@ -660,7 +665,7 @@ def render(data_path: str, out_path: str) -> int:
     body.append(_toc(present))
     body.append(_stats_row(data))
     body.append(exec_summary_html)
-    body.append(_glance(data))
+    body.append(glance_html)
     for anchor, title_, body_ in section_specs:
         body.append(_section(anchor, title_, body_))
     body.append(_fun(data))

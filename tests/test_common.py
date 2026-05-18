@@ -2,6 +2,8 @@
 system-injection filter (corrupts headline metrics if wrong) and Bash path
 extraction (affects language histogram accuracy).
 """
+import pytest
+
 import common
 
 
@@ -262,3 +264,19 @@ class TestParseIso:
     def test_overflow_returns_none(self):
         # Extremely large values that pass the > 1e12 ms branch but still overflow.
         assert common.parse_iso(1e30) is None
+
+
+# ------------- detect_language -------------
+
+class TestDetectLanguage:
+    @pytest.mark.parametrize("path,expected", [
+        ("foo.py", "python"),
+        ("FOO.PY", "python"),
+        ("path/to/file.ts", "typescript"),
+        ("file.unknownext", ""),
+        ("noextension", ""),
+        ("", ""),
+        ("/abs/path/script.sh", "shell"),
+    ])
+    def test_detect(self, path, expected):
+        assert common.detect_language(path) == expected

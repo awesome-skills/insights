@@ -23,6 +23,20 @@ from common import (  # type: ignore[import-not-found]
 
 DEFAULT_ROOT = Path.home() / ".gemini" / "tmp"
 
+# Orchestrator-facing capabilities (see claude_code.py for the contract).
+ROOT_KWARG = "root"
+LIST_KWARGS: dict = {}
+
+
+def is_subagent_session(ref: dict) -> bool:
+    """Gemini has no subagent rollout concept."""
+    return False
+
+
+def parse_one(ref: dict, metadata_only: bool = False):
+    """Uniform per-adapter parse entry; see claude_code.parse_one."""
+    return parse_session(ref["path"], metadata_only=metadata_only)
+
 # Refuse to load Gemini session files above this size into memory. Gemini stores
 # inlineData (images) as base64 in the JSON, so individual files can balloon.
 # 50MB covers the longest legitimate sessions we've seen.

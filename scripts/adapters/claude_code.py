@@ -9,7 +9,6 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
 
 from common import (  # type: ignore[import-not-found]
     DiscardList,
@@ -27,6 +26,26 @@ from common import (  # type: ignore[import-not-found]
 
 
 DEFAULT_ROOT = Path.home() / ".claude" / "projects"
+
+# Orchestrator-facing capabilities. Each adapter exposes the same three
+# attributes so insights.py can branch on capabilities instead of agent name
+# strings. `dict` annotation on LIST_KWARGS keeps it open for callers that
+# want to push extra kwargs (e.g. codex's skip_subagent_check).
+ROOT_KWARG = "root"
+LIST_KWARGS: dict = {}
+
+
+def is_subagent_session(ref: dict) -> bool:
+    """Claude Code's `subagents/` rollouts are filtered upstream by
+    `list_sessions`' path glob, so any ref reaching cmd_metadata is real."""
+    return False
+
+
+def parse_one(ref: dict, metadata_only: bool = False):
+    """Uniform per-adapter parse entry. Lets insights.py call
+    `adapter.parse_one(ref)` instead of branching on agent name to pick the
+    right `parse_session(...)` signature."""
+    return parse_session(ref["path"], metadata_only=metadata_only)
 
 
 def list_sessions(since: datetime | None = None, root: Path = DEFAULT_ROOT) -> list[dict]:

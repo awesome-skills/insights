@@ -1,8 +1,9 @@
 """Shared types and helpers for insights skill."""
 from __future__ import annotations
 
-import json
 import hashlib
+import json
+import os
 import re
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -236,10 +237,10 @@ def parse_iso(ts: str | int | float | None) -> datetime | None:
 def detect_language(path: str) -> str:
     if not path:
         return ""
-    for ext, lang in LANG_EXT.items():
-        if path.lower().endswith(ext):
-            return lang
-    return ""
+    _, _, ext = path.lower().rpartition(".")
+    if not ext:
+        return ""
+    return LANG_EXT.get(f".{ext}", "")
 
 
 def count_git_actions(command: str) -> tuple[int, int]:
@@ -428,13 +429,13 @@ def aggregate_message(meta: SessionMetadata, msg: NormalizedMessage) -> None:
 
 def finalize_metadata(meta: SessionMetadata) -> None:
     if meta.start_time and meta.end_time:
-        try:
-            s = parse_iso(meta.start_time)
-            e = parse_iso(meta.end_time)
-            if s and e:
-                meta.duration_minutes = max(0.0, (e - s).total_seconds() / 60)
-        except Exception:
-            pass
+        # parse_iso swallows ValueError / OverflowError / OSError and returns
+        # None, so the `if s and e` guard handles every failure mode — no need
+        # for an outer try/except.
+        s = parse_iso(meta.start_time)
+        e = parse_iso(meta.end_time)
+        if s and e:
+            meta.duration_minutes = max(0.0, (e - s).total_seconds() / 60)
     # de-dup files_touched
     if meta.files_touched:
         seen = []
@@ -469,20 +470,10 @@ def metadata_to_dict(m: SessionMetadata) -> dict[str, Any]:
     return asdict(m)
 
 
-def dump_json(obj: Any, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
-def load_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def detect_agent_from_env() -> str | None:
     """Best-effort detection of the host agent. Returns one of:
     claude-code | codex | gemini | opencode | None
     """
-    import os
     # explicit env hints
     if os.environ.get("CLAUDECODE") or os.environ.get("CLAUDE_CODE_ENTRYPOINT"):
         return "claude-code"

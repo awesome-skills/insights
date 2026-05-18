@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
-import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +30,7 @@ sys.path.insert(0, str(HERE / "adapters"))
 from common import (  # noqa: E402
     detect_agent_from_env,
     metadata_to_dict,
+    parse_iso,
     safe_session_id,
 )
 
@@ -122,54 +122,37 @@ def cmd_list_agents(args: argparse.Namespace) -> int:
     return 0
 
 
-def _root_kw(agent: str, root: str | None) -> dict:
-    """Translate a generic `--root` arg into the kwarg name each adapter wants.
-    OpenCode takes `db=` (single sqlite file), the rest take `root=` (directory).
-    """
+def _root_kw(adapter, root: str | None) -> dict:
+    """Translate a generic `--root` arg into the kwarg name the adapter wants.
+    Each adapter declares this via its `ROOT_KWARG` attribute (e.g. "root" for
+    file-tree adapters, "db" for OpenCode's single sqlite file). Defaults to
+    "root" so a future adapter that forgets to declare it still works."""
     if not root:
         return {}
     expanded = Path(root).expanduser()
-    return {"db" if agent == "opencode" else "root": expanded}
+    kwarg = getattr(adapter, "ROOT_KWARG", "root")
+    return {kwarg: expanded}
 
 
 def cmd_discover(args: argparse.Namespace) -> int:
     agent = args.agent if args.agent != "auto" else _detect()
     adapter = _load_adapter(agent)
-    sessions = adapter.list_sessions(since=_since(args.days), **_root_kw(agent, args.root))
+    sessions = adapter.list_sessions(since=_since(args.days), **_root_kw(adapter, args.root))
     sessions = _apply_limit(sessions, args.limit)
     print(json.dumps({"agent": agent, "count": len(sessions), "sessions": sessions}, indent=2, ensure_ascii=False))
     return 0
-
-
-def _parse_one(adapter, agent: str, session_ref: dict, metadata_only: bool = False):
-    """Parse a session via the right adapter. `metadata_only=True` skips
-    building the full NormalizedMessage list — keeps RSS bounded when one of
-    the source files is huge (e.g. 308MB Codex session → 1.2GB RSS otherwise).
-    """
-    if agent == "opencode":
-        return adapter.parse_session(
-            session_ref["path"],
-            session_id=session_ref["session_id"],
-            metadata_only=metadata_only,
-        )
-    return adapter.parse_session(session_ref["path"], metadata_only=metadata_only)
 
 
 def _session_mtime(ref: dict) -> float | None:
     """Best-effort epoch mtime for cache invalidation.
 
     Adapters write `mtime` as an ISO string (claude-code, codex, gemini) or
-    derive it from sqlite `time_updated` (opencode). Returning a float lets us
-    compare against the cached metadata file's filesystem mtime cheaply.
-    """
-    mt = ref.get("mtime")
-    if not mt:
-        return None
-    try:
-        s = mt.replace("Z", "+00:00")
-        return datetime.fromisoformat(s).timestamp()
-    except (ValueError, AttributeError):
-        return None
+    derive it from sqlite `time_updated` (opencode). Delegates to `parse_iso`
+    so bool / NaN / Inf / garbage strings get the same hardened handling that
+    aggregator code relies on, instead of a second hand-rolled parser drifting
+    out of sync."""
+    dt = parse_iso(ref.get("mtime"))
+    return dt.timestamp() if dt else None
 
 
 def cmd_metadata(args: argparse.Namespace) -> int:
@@ -178,14 +161,12 @@ def cmd_metadata(args: argparse.Namespace) -> int:
     workdir = _resolve_workdir(agent, args.workdir)
     meta_dir = workdir / "metadata"
     meta_dir.mkdir(parents=True, exist_ok=True)
-    root_kw = _root_kw(agent, args.root)
+    root_kw = _root_kw(adapter, args.root)
 
-    # Codex's subagent filter does a `_is_subagent_rollout` per JSONL (opens
-    # + readlines every file). Skip it in discovery and re-check lazily on
-    # cache miss below, so steady-state runs avoid N file opens.
-    list_kwargs = dict(root_kw)
-    if agent == "codex":
-        list_kwargs["skip_subagent_check"] = True
+    # Per-adapter discovery hints (e.g. Codex sets
+    # `skip_subagent_check=True` to skip the per-JSONL first-line read here
+    # and re-validate lazily via `is_subagent_session` on cache miss).
+    list_kwargs = {**root_kw, **getattr(adapter, "LIST_KWARGS", {})}
 
     if args.session:
         sessions = [s for s in adapter.list_sessions(**list_kwargs) if s["session_id"] == args.session]
@@ -230,14 +211,14 @@ def cmd_metadata(args: argparse.Namespace) -> int:
                     written.append(str(outp))
                     continue
 
-        # Cache-miss path: re-validate that this isn't a Codex subagent rollout
-        # before parsing. (`list_sessions(skip_subagent_check=True)` returned
-        # everything; the cache layer above implicitly filtered prior runs.)
-        if agent == "codex" and adapter._is_subagent_rollout(Path(ref["path"])):
+        # Cache-miss path: re-validate via the adapter's own filter (most
+        # adapters return False; Codex skipped the check during discovery and
+        # uses this hook to filter out subagent rollouts before parsing).
+        if getattr(adapter, "is_subagent_session", lambda _ref: False)(ref):
             continue
 
         try:
-            parsed = _parse_one(adapter, agent, ref, metadata_only=True)
+            parsed = adapter.parse_one(ref, metadata_only=True)
             if args.min_messages and parsed.metadata.user_message_count < args.min_messages:
                 skipped += 1
                 continue
@@ -265,11 +246,11 @@ def cmd_metadata(args: argparse.Namespace) -> int:
 def cmd_transcript(args: argparse.Namespace) -> int:
     agent = args.agent if args.agent != "auto" else _detect()
     adapter = _load_adapter(agent)
-    sessions = [s for s in adapter.list_sessions(**_root_kw(agent, args.root))
+    sessions = [s for s in adapter.list_sessions(**_root_kw(adapter, args.root))
                 if s["session_id"] == args.session]
     if not sessions:
         raise SystemExit(f"session not found: {args.session}")
-    parsed = _parse_one(adapter, agent, sessions[0])
+    parsed = adapter.parse_one(sessions[0])
     md_lines = _render_transcript_markdown(
         parsed, max_chars=args.max_chars, mode=args.mode, head_ratio=args.head_ratio,
     )

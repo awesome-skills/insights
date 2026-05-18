@@ -186,6 +186,21 @@ def test_executive_summary_anchor_absent_when_no_data(write_and_render):
     assert 'href="#exec-summary"' not in html
 
 
+def test_at_a_glance_listed_in_toc(write_and_render):
+    html = write_and_render({
+        "header": {"agent": "test", "title": "x"},
+        "at_a_glance": {"whats_working": "user ships fast"},
+    })
+    assert 'id="at-a-glance"' in html
+    assert 'href="#at-a-glance"' in html
+
+
+def test_at_a_glance_anchor_absent_when_no_data(write_and_render):
+    html = write_and_render({"header": {"agent": "test", "title": "x"}})
+    assert 'id="at-a-glance"' not in html
+    assert 'href="#at-a-glance"' not in html
+
+
 def test_html_lang_chinese_detected(write_and_render):
     data = {
         "header": {"title": "中文报告"},
