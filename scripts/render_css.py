@@ -114,7 +114,7 @@ h2 { font-size: 20px; font-weight: 600; color: #0f172a; margin-top: 44px; margin
 .bar-label { width: 110px; font-size: 11.5px; color: #475569; flex-shrink: 0;
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar-track { flex: 1; height: 6px; background: #f1f5f9; border-radius: 3px; margin: 0 8px; }
-.bar-fill { height: 100%; border-radius: 3px; background: #6366f1; }
+.bar-fill { display: block; height: 100%; border-radius: 3px; background: #6366f1; }
 .bar-fill.c1 { background: #6366f1; } /* indigo */
 .bar-fill.c2 { background: #10b981; } /* emerald */
 .bar-fill.c3 { background: #f59e0b; } /* amber */

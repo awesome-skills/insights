@@ -148,6 +148,17 @@ def test_bar_chart_cycles_colors(write_and_render):
     assert len(classes) >= 2
 
 
+def test_bar_fill_is_block_level(write_and_render):
+    # `.bar-fill` is a <span>; width/height do not apply to inline
+    # non-replaced elements, so without display:block every bar renders as an
+    # empty track.
+    html = write_and_render({
+        "header": {"agent": "test"},
+        "stats": {"tool_counts": {"a": 1}},
+    })
+    assert re.search(r"\.bar-fill\s*\{[^}]*display:\s*block", html)
+
+
 def test_bar_chart_color_cycle_covers_top_n(write_and_render):
     # The cycle must have at least as many entries as the default top_n (=8),
     # otherwise the top of a busy chart shows two bars with the same colour
