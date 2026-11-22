@@ -29,6 +29,18 @@ from common import (  # type: ignore[import-not-found]
 
 DEFAULT_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
 
+
+def _schema_version(cur: sqlite3.Cursor) -> int:
+    """OpenCode 1 uses session/message/part; OpenCode 2 uses
+    session_v2/session_message with parts embedded in the message JSON."""
+    names = {row[0] for row in cur.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "session" in names:
+        return 1
+    if "session_v2" in names:
+        return 2
+    return 0
+
+
 # Orchestrator-facing capabilities (see claude_code.py for the contract).
 # OpenCode's single-SQLite layout means cmd_metadata passes a `db=` kwarg,
 # unlike the other adapters that take `root=`.
@@ -95,7 +107,13 @@ def list_sessions(since: datetime | None = None, db: Path = DEFAULT_DB) -> list[
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         cur = conn.cursor()
-        q = "SELECT id, directory, title, time_created, time_updated FROM session"
+        version = _schema_version(cur)
+        if version == 2:
+            q = "SELECT id, directory, title, time_created, time_updated FROM session_v2"
+        elif version == 1:
+            q = "SELECT id, directory, title, time_created, time_updated FROM session"
+        else:
+            return []
         params: tuple = ()
         if since:
             q += " WHERE time_updated >= ?"
@@ -115,6 +133,135 @@ def list_sessions(since: datetime | None = None, db: Path = DEFAULT_DB) -> list[
         conn.close()
 
 
+def _v2_flatten_tool_output(state: dict):
+    content = state.get("content")
+    if not content:
+        return state.get("output") or state.get("error") or state.get("stderr") or state.get("message")
+    chunks = []
+    for item in content if isinstance(content, list) else [content]:
+        if isinstance(item, dict) and item.get("type") == "text":
+            chunks.append(item.get("text") or "")
+        elif isinstance(item, str):
+            chunks.append(item)
+    return "\n".join(x for x in chunks if x)
+
+
+def _parse_session_v2(cur: sqlite3.Cursor, session_id: str, metadata_only: bool = False) -> ParsedSession:
+    row = cur.execute(
+        "SELECT id, directory, time_created, time_updated FROM session_v2 WHERE id=?",
+        (session_id,),
+    ).fetchone()
+    if not row:
+        return ParsedSession(metadata=SessionMetadata(session_id=session_id, agent="opencode"), messages=[])
+    sid, directory, tc, tu = row
+    meta = SessionMetadata(session_id=sid, agent="opencode")
+    meta.project_path = directory or ""
+    meta.start_time = _epoch_ms_to_iso(tc)
+    meta.end_time = _epoch_ms_to_iso(tu)
+    # Token totals on the session_v2 row are cumulative across the whole
+    # session, so using them directly over-counts context N times. Derive the
+    # peak context from per-message tokens instead, same as the v1 path.
+
+    messages: list[NormalizedMessage] = DiscardList() if metadata_only else []
+    rows = cur.execute(
+        "SELECT id, type, time_created, data FROM session_message "
+        "WHERE session_id=? AND type IN ('user','assistant') ORDER BY seq ASC",
+        (sid,),
+    ).fetchall()
+    for mid, mtype, mtc, raw in rows:
+        try:
+            d = json.loads(raw or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        ts = _epoch_ms_to_iso(mtc)
+        if mtype == "user":
+            text = (d.get("text") or "").strip()
+            if text:
+                nm = NormalizedMessage(role="user", timestamp=ts, text=truncate(text, 600))
+                aggregate_message(meta, nm)
+                messages.append(nm)
+            for f in d.get("files") or []:
+                if not isinstance(f, dict):
+                    continue
+                path = f.get("path") or f.get("filename")
+                if path:
+                    meta.files_touched.append(path)
+                mime = str(f.get("mime") or f.get("media_type") or "")
+                if mime.startswith("image/"):
+                    meta.image_inputs += 1
+            if not text and d.get("files"):
+                nm = NormalizedMessage(role="user", timestamp=ts, text="[file attachment]")
+                aggregate_message(meta, nm)
+                messages.append(nm)
+            continue
+
+        tokens = d.get("tokens") or {}
+        cache = tokens.get("cache") or {}
+        ctx = (tokens.get("input") or 0) + (cache.get("read") or 0) + (cache.get("write") or 0)
+        if ctx > meta.input_tokens:
+            meta.input_tokens = ctx
+        meta.output_tokens += tokens.get("output") or 0
+
+        chunks = []
+        for c in d.get("content") or []:
+            if not isinstance(c, dict):
+                continue
+            ctype = c.get("type")
+            if ctype == "text":
+                if c.get("text"):
+                    chunks.append(c["text"])
+            elif ctype == "tool":
+                name = c.get("name") or c.get("tool") or "unknown"
+                state = c.get("state") or {}
+                cmd, fp = extract_tool_input(state.get("input"))
+                if fp:
+                    meta.files_touched.append(fp)
+                is_err = str(state.get("status") or "").lower() in _FAILED_TOOL_STATUSES
+                nm = NormalizedMessage(role="tool_use", timestamp=ts, text=truncate(cmd, 600), tool_name=name)
+                aggregate_message(meta, nm)
+                messages.append(nm)
+                if metadata_only:
+                    if is_err:
+                        result = NormalizedMessage(role="tool_result", timestamp=ts, text="",
+                                                   tool_name=name, is_error=True)
+                        aggregate_message(meta, result)
+                        messages.append(result)
+                    continue
+                out_text = _stringify_part_value(_v2_flatten_tool_output(state))
+                if is_err or out_text:
+                    result = NormalizedMessage(role="tool_result", timestamp=ts,
+                                               text=truncate(out_text, 1200), tool_name=name, is_error=is_err)
+                    aggregate_message(meta, result)
+                    messages.append(result)
+            elif ctype == "file":
+                path = c.get("path") or c.get("filename")
+                if path:
+                    meta.files_touched.append(path)
+                mime = str(c.get("mime") or c.get("media_type") or "")
+                if mime.startswith("image/"):
+                    meta.image_inputs += 1
+            elif ctype == "patch":
+                for f in c.get("files") or []:
+                    if isinstance(f, str) and f:
+                        meta.files_touched.append(f)
+                    elif isinstance(f, dict) and f.get("path"):
+                        meta.files_touched.append(f["path"])
+            elif ctype == "subtask":
+                desc = c.get("description") or c.get("prompt") or c.get("agent") or "subtask"
+                nm = NormalizedMessage(role="tool_use", timestamp=ts,
+                                       text=_stringify_part_value(desc), tool_name="subtask")
+                aggregate_message(meta, nm)
+                messages.append(nm)
+        text = "\n".join(chunks).strip()
+        if text:
+            nm = NormalizedMessage(role="assistant", timestamp=ts, text=truncate(text, 600))
+            aggregate_message(meta, nm)
+            messages.append(nm)
+
+    finalize_metadata(meta)
+    return ParsedSession(metadata=meta, messages=messages)
+
+
 def parse_session(path_or_db: str, session_id: str = "", metadata_only: bool = False) -> ParsedSession:
     """For OpenCode, path_or_db is the DB path and session_id identifies the row."""
     db = Path(path_or_db) if path_or_db else DEFAULT_DB
@@ -126,6 +273,8 @@ def parse_session(path_or_db: str, session_id: str = "", metadata_only: bool = F
     conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         cur = conn.cursor()
+        if _schema_version(cur) == 2:
+            return _parse_session_v2(cur, session_id, metadata_only=metadata_only)
         row = cur.execute(
             "SELECT id, directory, title, time_created, time_updated FROM session WHERE id=?",
             (session_id,),

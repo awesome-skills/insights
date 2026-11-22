@@ -814,6 +814,102 @@ class TestOpenCode:
         assert parsed.metadata.tool_errors == 1
 
 
+    def _make_db_v2(self, tmp_path: Path, messages: list[dict],
+                    session_tokens: tuple[int, int, int, int] = (0, 0, 0, 0)) -> Path:
+        db = tmp_path / "opencode.db"
+        conn = sqlite3.connect(db)
+        conn.executescript("""
+            CREATE TABLE project(id TEXT PRIMARY KEY);
+            CREATE TABLE session_v2(
+                id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT,
+                time_created INTEGER, time_updated INTEGER,
+                tokens_input INTEGER DEFAULT 0, tokens_output INTEGER DEFAULT 0,
+                tokens_cache_read INTEGER DEFAULT 0, tokens_cache_write INTEGER DEFAULT 0
+            );
+            CREATE TABLE session_message(
+                id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER,
+                time_created INTEGER, time_updated INTEGER, data TEXT
+            );
+        """)
+        ti, to, cr, cw = session_tokens
+        conn.execute(
+            "INSERT INTO session_v2 VALUES('ses_v2', 'p1', '/tmp/proj', 'v2 session', "
+            "1700000000000, 1700001000000, ?, ?, ?, ?)",
+            (ti, to, cr, cw),
+        )
+        for i, m in enumerate(messages):
+            ts = 1700000000000 + i * 1000
+            conn.execute(
+                "INSERT INTO session_message VALUES(?, 'ses_v2', ?, ?, ?, ?, ?)",
+                (f"msg_{i}", m["type"], i, ts, ts, json.dumps(m["data"])),
+            )
+        conn.commit()
+        conn.close()
+        return db
+
+    def test_v2_schema_is_detected_and_parsed(self, tmp_path):
+        db = self._make_db_v2(tmp_path, [
+            {"type": "user", "data": {"text": "hello v2"}},
+            {"type": "assistant", "data": {
+                "tokens": {"input": 100, "output": 7, "cache": {"read": 50, "write": 10}},
+                "content": [
+                    {"type": "text", "text": "hi"},
+                    {"type": "tool", "name": "shell", "state": {
+                        "status": "completed",
+                        "input": {"command": "ls -la"},
+                        "content": [{"type": "text", "text": "file.txt"}],
+                    }},
+                ],
+            }},
+        ])
+        sessions = opencode.list_sessions(db=db)
+        assert [s["session_id"] for s in sessions] == ["ses_v2"]
+        assert sessions[0]["project_path"] == "/tmp/proj"
+
+        parsed = opencode.parse_session(str(db), session_id="ses_v2")
+        assert parsed.metadata.user_message_count == 1
+        assert parsed.metadata.first_prompt == "hello v2"
+        assert parsed.metadata.tool_counts["shell"] == 1
+        roles = [(m.role, m.tool_name, m.text) for m in parsed.messages]
+        assert ("tool_use", "shell", "ls -la") in roles
+        assert ("tool_result", "shell", "file.txt") in roles
+
+    def test_v2_tokens_use_context_peak_not_cumulative_session_totals(self, tmp_path):
+        # session_v2 totals are cumulative over the whole session; the report
+        # needs the peak context size, like the v1 path.
+        db = self._make_db_v2(
+            tmp_path,
+            [
+                {"type": "assistant", "data": {
+                    "tokens": {"input": 100, "output": 3, "cache": {"read": 50, "write": 10}},
+                }},
+                {"type": "assistant", "data": {
+                    "tokens": {"input": 200, "output": 5, "cache": {"read": 60, "write": 0}},
+                }},
+            ],
+            session_tokens=(9_000_000, 400_000, 50_000_000, 0),
+        )
+        parsed = opencode.parse_session(str(db), session_id="ses_v2")
+        assert parsed.metadata.input_tokens == 260
+        assert parsed.metadata.output_tokens == 8
+
+    def test_v2_metadata_only_keeps_aggregates(self, tmp_path):
+        db = self._make_db_v2(tmp_path, [
+            {"type": "assistant", "data": {
+                "tokens": {"input": 10, "output": 1, "cache": {}},
+                "content": [{"type": "tool", "name": "shell", "state": {
+                    "status": "error",
+                    "input": {"command": "false"},
+                    "content": [{"type": "text", "text": "boom"}],
+                }}],
+            }},
+        ])
+        parsed = opencode.parse_session(str(db), session_id="ses_v2", metadata_only=True)
+        assert parsed.messages == []
+        assert parsed.metadata.tool_errors == 1
+        assert parsed.metadata.tool_counts["shell"] == 1
+
+
 # ---------------- transcript rendering ----------------
 
 class TestTranscriptRendering:
